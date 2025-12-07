@@ -3,9 +3,11 @@ import { AppState, UserProfile, HealthReport } from './types';
 import { INITIAL_USER_PROFILE } from './constants';
 import { generateHealthReport } from './services/geminiService';
 import Hero from './components/Hero';
+import BlogSection from './components/BlogSection';
 import HealthForm from './components/HealthForm';
 import LoadingScreen from './components/LoadingScreen';
 import ReportDashboard from './components/ReportDashboard';
+import BloodTypeBlog from './components/BloodTypeBlog';
 import { HeartPulse } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -16,6 +18,11 @@ const App: React.FC = () => {
 
   const handleStart = () => {
     setAppState(AppState.FORM);
+    window.scrollTo(0, 0);
+  };
+
+  const handleOpenBloodBlog = () => {
+    setAppState(AppState.BLOOD_BLOG);
     window.scrollTo(0, 0);
   };
 
@@ -52,7 +59,7 @@ const App: React.FC = () => {
             <div className="bg-teal-600 p-1.5 rounded-lg">
                 <HeartPulse className="h-6 w-6 text-white" />
             </div>
-            <span className="text-xl font-bold text-gray-900 tracking-tight">VitalSync AI</span>
+            <span className="text-xl font-bold text-gray-900 tracking-tight"> Your Ultimate Health Partner</span>
           </div>
           <div className="text-sm text-gray-500 hidden sm:block">
             Personalized Health Intelligence
@@ -62,7 +69,16 @@ const App: React.FC = () => {
 
       {/* Main Content */}
       <main className="flex-grow bg-slate-50">
-        {appState === AppState.LANDING && <Hero onStart={handleStart} />}
+        {appState === AppState.LANDING && (
+          <>
+            <Hero onStart={handleStart} onOpenBloodBlog={handleOpenBloodBlog} />
+            <BlogSection />
+          </>
+        )}
+
+        {appState === AppState.BLOOD_BLOG && (
+          <BloodTypeBlog onBack={handleReset} />
+        )}
         
         {appState === AppState.FORM && (
           <div className="py-8">
@@ -98,7 +114,7 @@ const App: React.FC = () => {
         <div className="mx-auto max-w-7xl px-6 py-8 md:flex md:items-center md:justify-between lg:px-8">
           <div className="mt-8 md:order-1 md:mt-0">
             <p className="text-xs leading-5 text-gray-500 text-center md:text-left">
-              &copy; 2024 VitalSync AI. All rights reserved. <br/>
+              &copy; 2025 Your Ultimate Health Partner, All rights reserved. <br/>
               <span className="font-semibold text-gray-400">Disclaimer:</span> This application uses AI to provide general wellness suggestions. It is not a substitute for professional medical advice, diagnosis, or treatment. Always consult with a qualified healthcare provider for medical concerns.
             </p>
           </div>

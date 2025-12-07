@@ -3,22 +3,36 @@ import { Activity, ShieldCheck, HeartPulse, ArrowRight } from 'lucide-react';
 
 interface HeroProps {
   onStart: () => void;
+  onOpenBloodBlog: () => void;
 }
 
-const Hero: React.FC<HeroProps> = ({ onStart }) => {
+const Hero: React.FC<HeroProps> = ({ onStart, onOpenBloodBlog }) => {
+  const scrollToBlogs = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    const element = document.getElementById('learn-more');
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   return (
     <div className="relative isolate overflow-hidden">
       <div className="mx-auto max-w-7xl px-6 pb-24 pt-10 sm:pb-32 lg:flex lg:px-8 lg:py-40">
         <div className="mx-auto max-w-2xl lg:mx-0 lg:max-w-xl lg:flex-shrink-0 lg:pt-8">
-          <div className="mt-24 sm:mt-32 lg:mt-16">
-            <a href="#" className="inline-flex space-x-6">
-              <span className="rounded-full bg-teal-600/10 px-3 py-1 text-sm font-semibold leading-6 text-teal-600 ring-1 ring-inset ring-teal-600/10">
+          <div className="mt-24 sm:mt-32 lg:mt-16 flex flex-wrap items-center gap-4">
+            <button 
+                onClick={onStart}
+                className="rounded-full bg-teal-600/10 px-3 py-1 text-sm font-semibold leading-6 text-teal-600 ring-1 ring-inset ring-teal-600/10 hover:bg-teal-600/20 transition-colors"
+            >
                 New Feature
-              </span>
-              <span className="inline-flex items-center space-x-2 text-sm font-medium leading-6 text-gray-600">
-                <span>Blood type analysis included</span>
-              </span>
-            </a>
+            </button>
+            <button 
+                onClick={onOpenBloodBlog} 
+                className="inline-flex items-center space-x-2 text-sm font-medium leading-6 text-gray-600 hover:text-teal-600 transition-colors"
+            >
+                <span>Blood type analysis</span>
+                <span aria-hidden="true">&rarr;</span>
+            </button>
           </div>
           <h1 className="mt-10 text-4xl font-bold tracking-tight text-gray-900 sm:text-6xl">
             Unlock Your Body's <span className="text-teal-600">True Potential</span>
@@ -33,7 +47,7 @@ const Hero: React.FC<HeroProps> = ({ onStart }) => {
             >
               Start Assessment <ArrowRight className="h-4 w-4" />
             </button>
-            <a href="#features" className="text-sm font-semibold leading-6 text-gray-900">
+            <a href="#learn-more" onClick={scrollToBlogs} className="text-sm font-semibold leading-6 text-gray-900 cursor-pointer flex items-center gap-1">
               Learn more <span aria-hidden="true">→</span>
             </a>
           </div>

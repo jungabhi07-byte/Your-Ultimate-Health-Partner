@@ -1,45 +1,18 @@
-import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { HealthReport, UserProfile } from "../types";
+import { GoogleGenAI, Modality } from "@google/genai";
+import { HealthReport, UserProfile, Source } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const healthReportSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    bmi: { type: Type.NUMBER, description: "The calculated Body Mass Index based on height and weight" },
-    bmiCategory: { type: Type.STRING, description: "Category like Underweight, Normal, Overweight, Obese" },
-    overallHealthScore: { type: Type.NUMBER, description: "A calculated health score from 0 to 100 based on the profile inputs and risks" },
-    summary: { type: Type.STRING, description: "A concise executive summary of the user's health condition" },
-    potentialRisks: { 
-      type: Type.ARRAY, 
-      items: { type: Type.STRING },
-      description: "List of potential health risks based on blood group, age, and biometrics"
-    },
-    keyStrengths: { 
-      type: Type.ARRAY, 
-      items: { type: Type.STRING },
-      description: "List of positive health indicators from their profile"
-    },
-    dailyRoutine: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          timeOfDay: { type: Type.STRING, description: "E.g., Morning, Afternoon, Evening, Bedtime" },
-          title: { type: Type.STRING },
-          description: { type: Type.STRING },
-          type: { type: Type.STRING, enum: ['exercise', 'diet', 'lifestyle', 'mindfulness'] }
-        },
-        required: ['timeOfDay', 'title', 'description', 'type']
-      }
-    },
-    nutritionalAdvice: { 
-      type: Type.ARRAY, 
-      items: { type: Type.STRING },
-      description: "Specific dietary suggestions relevant to blood group and goals"
-    }
-  },
-  required: ['bmi', 'bmiCategory', 'overallHealthScore', 'summary', 'potentialRisks', 'dailyRoutine', 'nutritionalAdvice']
+const cleanJsonString = (str: string) => {
+  // Remove markdown code blocks if present
+  let cleaned = str.replace(/```json/g, '').replace(/```/g, '').trim();
+  // Sometimes the model might output text before or after the JSON, attempt to find the first { and last }
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1) {
+    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+  }
+  return cleaned;
 };
 
 export const generateHealthReport = async (profile: UserProfile): Promise<HealthReport> => {
@@ -60,34 +33,104 @@ export const generateHealthReport = async (profile: UserProfile): Promise<Health
 
       Instructions:
       1. Calculate BMI accurately.
-      2. Consider Blood Group specific dietary tendencies (e.g., Blood Type Diet theories, but grounded in general nutritional science).
-      3. Provide practical, actionable advice.
-      4. The 'overallHealthScore' should be a realistic estimation (0-100) based on BMI and activity level (penalize for sedentary or extreme BMI).
+      2. USE GOOGLE SEARCH to find the latest scientific consensus on Blood Group diets and specific health risks associated with the user's demographic and blood type.
+      3. Provide practical, actionable advice based on this research.
+      4. The 'overallHealthScore' should be a realistic estimation (0-100) based on BMI and activity level.
       5. Create a structured daily routine that balances diet, exercise, and mental well-being.
       
-      Return the response in strictly valid JSON matching the provided schema.
+      CRITICAL: You MUST return the result as a VALID JSON OBJECT. Do not include markdown formatting or any introductory text.
+      
+      The JSON structure must match this exactly:
+      {
+        "bmi": number,
+        "bmiCategory": "Underweight" | "Normal" | "Overweight" | "Obese",
+        "overallHealthScore": number (0-100),
+        "summary": "Concise executive summary",
+        "potentialRisks": ["risk 1", "risk 2"],
+        "keyStrengths": ["strength 1", "strength 2"],
+        "dailyRoutine": [
+          {
+            "timeOfDay": "Morning" | "Afternoon" | "Evening",
+            "title": "Activity Title",
+            "description": "Short description",
+            "type": "exercise" | "diet" | "lifestyle" | "mindfulness"
+          }
+        ],
+        "nutritionalAdvice": ["tip 1", "tip 2"]
+      }
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.5-flash", // Updated to allow tools
       contents: prompt,
       config: {
-        responseMimeType: "application/json",
-        responseSchema: healthReportSchema,
-        temperature: 0.4, // Keep it relatively deterministic and professional
+        tools: [{ googleSearch: {} }],
+        // responseSchema and responseMimeType are NOT allowed when using googleSearch tool
       },
     });
 
-    const jsonText = response.text;
-    if (!jsonText) {
-        throw new Error("No content received from AI");
+    const text = response.text || "{}";
+    const cleanedText = cleanJsonString(text);
+    
+    let report: HealthReport;
+    try {
+        report = JSON.parse(cleanedText);
+    } catch (parseError) {
+        console.error("JSON Parse failed on:", cleanedText);
+        throw new Error("Failed to parse AI response");
     }
 
-    const report: HealthReport = JSON.parse(jsonText);
+    // Extract Search Grounding Metadata
+    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const sources: Source[] = chunks
+      .map((chunk) => ({
+        title: chunk.web?.title || "Source",
+        uri: chunk.web?.uri || ""
+      }))
+      .filter((source) => source.uri !== "");
+    
+    // Deduplicate sources based on URI
+    const uniqueSourcesMap = new Map<string, Source>();
+    sources.forEach(source => {
+      uniqueSourcesMap.set(source.uri, source);
+    });
+    const uniqueSources = Array.from(uniqueSourcesMap.values());
+    
+    report.sources = uniqueSources;
+
     return report;
 
   } catch (error) {
     console.error("Error generating health report:", error);
+    throw error;
+  }
+};
+
+export const generateAudioSummary = async (text: string): Promise<string> => {
+  try {
+    const prompt = `Read the following health summary in a warm, encouraging, and professional tone. Speak clearly and at a moderate pace.\n\nText to read: "${text}"`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text: prompt }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Kore' },
+          },
+        },
+      },
+    });
+
+    const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!audioData) {
+      throw new Error("No audio data generated");
+    }
+
+    return audioData;
+  } catch (error) {
+    console.error("Error generating audio:", error);
     throw error;
   }
 };

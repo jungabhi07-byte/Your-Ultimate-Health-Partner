@@ -1,17 +1,21 @@
-import React from 'react';
-import { HealthReport, DailyActivity } from '../types';
-import { ResponsiveContainer, RadialBarChart, RadialBar, Tooltip } from 'recharts';
+import React, { useState, useRef, useEffect } from 'react';
+import { HealthReport } from '../types';
+import { ResponsiveContainer, RadialBarChart, RadialBar } from 'recharts';
 import { 
   AlertTriangle, 
   CheckCircle, 
   Calendar, 
-  Coffee, 
   Moon, 
   Sun, 
   Utensils, 
   Activity, 
-  Droplet 
+  Droplet,
+  Play,
+  Pause,
+  ExternalLink,
+  Loader2
 } from 'lucide-react';
+import { generateAudioSummary } from '../services/geminiService';
 
 interface ReportDashboardProps {
   report: HealthReport;
@@ -19,7 +23,14 @@ interface ReportDashboardProps {
 }
 
 const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) => {
-  
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
+  const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
+  const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+  const startTimeRef = useRef<number>(0);
+  const pausedTimeRef = useRef<number>(0);
+
   // Data for the radial chart
   const scoreData = [
     {
@@ -47,6 +58,127 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
     return <Calendar className="h-5 w-5 text-gray-400" />;
   };
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (sourceNodeRef.current) {
+        sourceNodeRef.current.stop();
+      }
+      if (audioContext && audioContext.state !== 'closed') {
+        audioContext.close();
+      }
+    };
+  }, []);
+
+  const decodePCM = (base64Data: string, ctx: AudioContext): AudioBuffer => {
+    const binaryString = atob(base64Data);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    // Convert to 16-bit PCM
+    // Create a new ArrayBuffer view for Int16
+    const int16Data = new Int16Array(bytes.buffer);
+    const sampleRate = 24000; // Gemini default for this model
+    const numChannels = 1;
+    
+    const buffer = ctx.createBuffer(numChannels, int16Data.length, sampleRate);
+    const channelData = buffer.getChannelData(0);
+    
+    for (let i = 0; i < int16Data.length; i++) {
+      // Convert Int16 to Float32 range [-1.0, 1.0]
+      channelData[i] = int16Data[i] / 32768.0;
+    }
+    
+    return buffer;
+  };
+
+  const handlePlayAudio = async () => {
+    if (isPlaying) {
+      // Pause logic
+      if (sourceNodeRef.current && audioContext) {
+        try {
+            sourceNodeRef.current.stop();
+        } catch (e) {
+            // ignore if already stopped
+        }
+        pausedTimeRef.current = audioContext.currentTime - startTimeRef.current;
+        setIsPlaying(false);
+      }
+      return;
+    }
+
+    // Initialize AudioContext if needed
+    let ctx = audioContext;
+    if (!ctx) {
+        // Use standard AudioContext, fallback handled by browser usually
+        ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+        setAudioContext(ctx);
+    }
+
+    // Resume context if suspended (browser autoplay policy)
+    if (ctx.state === 'suspended') {
+        await ctx.resume();
+    }
+
+    if (!audioBuffer) {
+      setIsLoadingAudio(true);
+      try {
+        const base64Audio = await generateAudioSummary(report.summary);
+        
+        // Decode raw PCM manually
+        const decodedBuffer = decodePCM(base64Audio, ctx);
+        
+        setAudioBuffer(decodedBuffer);
+        playBuffer(ctx, decodedBuffer, 0);
+      } catch (err) {
+        console.error("Audio playback failed", err);
+        alert("Could not play audio summary. Please try again.");
+      } finally {
+        setIsLoadingAudio(false);
+      }
+    } else {
+      // Resume from paused time
+      playBuffer(ctx, audioBuffer, pausedTimeRef.current);
+    }
+  };
+
+  const playBuffer = (ctx: AudioContext, buffer: AudioBuffer, startOffset: number) => {
+    // If previous source exists, stop it
+    if (sourceNodeRef.current) {
+        try { sourceNodeRef.current.stop(); } catch(e) {}
+    }
+
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+    
+    source.onended = () => {
+       // This fires when playback stops naturally or via stop()
+       // We can check currentTime to see if it finished
+       // But for simple UI sync, we rely on the duration timeout or manual stop updates
+    };
+
+    source.start(0, startOffset);
+    startTimeRef.current = ctx.currentTime - startOffset;
+    sourceNodeRef.current = source;
+    setIsPlaying(true);
+    
+    // Auto-reset state when audio finishes
+    const duration = buffer.duration - startOffset;
+    // Clear any existing timeout if we were scrubbing/seeking (not implemented here but good practice)
+    setTimeout(() => {
+        // Only reset if we are still playing the same source
+        if (sourceNodeRef.current === source) {
+             setIsPlaying(false);
+             pausedTimeRef.current = 0;
+        }
+    }, duration * 1000 + 200); // Small buffer
+  };
+
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8 animate-fadeIn">
       
@@ -54,7 +186,28 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
       <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
         <div className="p-8 md:flex gap-8 items-center">
           <div className="flex-1 space-y-4">
-            <h2 className="text-3xl font-bold text-gray-900">Your Health Report</h2>
+            <div className="flex justify-between items-start">
+               <h2 className="text-3xl font-bold text-gray-900">Your Health Report</h2>
+               <button 
+                onClick={handlePlayAudio}
+                disabled={isLoadingAudio}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${
+                    isPlaying 
+                    ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' 
+                    : 'bg-teal-100 text-teal-700 hover:bg-teal-200'
+                }`}
+               >
+                 {isLoadingAudio ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                 ) : isPlaying ? (
+                    <Pause className="h-4 w-4" />
+                 ) : (
+                    <Play className="h-4 w-4" />
+                 )}
+                 {isPlaying ? 'Pause Summary' : 'Listen to Summary'}
+               </button>
+            </div>
+            
             <div className="flex items-center gap-2">
                  <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
                     report.bmiCategory === 'Normal' ? 'bg-green-100 text-green-800' : 
@@ -134,6 +287,33 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
                 ))}
              </ul>
            </div>
+
+           {/* Google Search Sources */}
+           {report.sources && report.sources.length > 0 && (
+             <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-gray-500">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2 mb-4">
+                    <ExternalLink className="h-5 w-5 text-gray-500" /> Verified Sources
+                </h3>
+                <ul className="space-y-2">
+                    {report.sources.map((source, idx) => (
+                        <li key={idx}>
+                            <a 
+                                href={source.uri} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-sm text-teal-600 hover:text-teal-800 hover:underline flex items-start gap-1"
+                            >
+                                <ExternalLink className="h-3 w-3 mt-1 flex-shrink-0" />
+                                <span className="truncate">{source.title}</span>
+                            </a>
+                        </li>
+                    ))}
+                </ul>
+                <p className="mt-3 text-xs text-gray-400">
+                    Data verified via Google Search Grounding
+                </p>
+             </div>
+           )}
         </div>
 
         {/* Daily Routine Column */}

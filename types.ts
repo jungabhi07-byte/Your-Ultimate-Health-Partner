@@ -16,6 +16,11 @@ export interface DailyActivity {
   type: 'exercise' | 'diet' | 'lifestyle' | 'mindfulness';
 }
 
+export interface Source {
+  title: string;
+  uri: string;
+}
+
 export interface HealthReport {
   bmi: number;
   bmiCategory: string;
@@ -25,6 +30,7 @@ export interface HealthReport {
   keyStrengths: string[];
   dailyRoutine: DailyActivity[];
   nutritionalAdvice: string[];
+  sources?: Source[];
 }
 
 export enum AppState {
@@ -32,5 +38,6 @@ export enum AppState {
   FORM = 'FORM',
   LOADING = 'LOADING',
   REPORT = 'REPORT',
-  ERROR = 'ERROR'
+  ERROR = 'ERROR',
+  BLOOD_BLOG = 'BLOOD_BLOG'
 }
