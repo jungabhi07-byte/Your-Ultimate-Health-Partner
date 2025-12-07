@@ -19,7 +19,7 @@ export const generateHealthReport = async (profile: UserProfile): Promise<Health
   try {
     const prompt = `
       Act as a world-class preventative health consultant and nutritionist. 
-      Analyze the following user profile and generate a comprehensive health report and daily routine.
+      Analyze the following user profile and generate a SIMPLE, CONCISE, and INTERESTING health report.
       
       User Profile:
       - Age: ${profile.age}
@@ -33,30 +33,37 @@ export const generateHealthReport = async (profile: UserProfile): Promise<Health
 
       Instructions:
       1. Calculate BMI accurately.
-      2. USE GOOGLE SEARCH to find the latest scientific consensus on Blood Group diets and specific health risks associated with the user's demographic and blood type.
-      3. Provide practical, actionable advice based on this research.
-      4. The 'overallHealthScore' should be a realistic estimation (0-100) based on BMI and activity level.
-      5. Create a structured daily routine that balances diet, exercise, and mental well-being.
+      2. **Holistic Health Score (0-100):** Do NOT rely solely on BMI. Evaluate overall health based on WHO and CDC guidelines. Consider age, activity level, and medical history.
+      3. USE GOOGLE SEARCH to find interesting and specific facts about the user's Blood Group and health risks.
+      4. Provide practical, actionable advice. KEEP IT SIMPLE.
+      5. Create a structured daily routine.
       
-      CRITICAL: You MUST return the result as a VALID JSON OBJECT. Do not include markdown formatting or any introductory text.
+      CRITICAL TONE INSTRUCTION:
+      - Address the user directly as "You" and "Your".
+      - Be encouraging but BRIEF. 
+      - AVOID complex medical jargon. Use simple, everyday language.
+      - FOCUS ON IMPACT: Only provide the top 3 most important points per section. Do not overwhelm the user with long lists.
+      
+      CRITICAL OUTPUT FORMAT:
+      - You MUST return the result as a VALID JSON OBJECT. Do not include markdown formatting or any introductory text.
       
       The JSON structure must match this exactly:
       {
         "bmi": number,
         "bmiCategory": "Underweight" | "Normal" | "Overweight" | "Obese",
         "overallHealthScore": number (0-100),
-        "summary": "Concise executive summary",
-        "potentialRisks": ["risk 1", "risk 2"],
-        "keyStrengths": ["strength 1", "strength 2"],
+        "summary": "Short, punchy, and engaging summary. Maximum 3 sentences. Focus on the big picture.",
+        "potentialRisks": ["risk 1", "risk 2" (Max 3 items, kept short)],
+        "keyStrengths": ["strength 1", "strength 2" (Max 3 items, kept short)],
         "dailyRoutine": [
           {
             "timeOfDay": "Morning" | "Afternoon" | "Evening",
             "title": "Activity Title",
-            "description": "Short description",
+            "description": "Short description (1 sentence max)",
             "type": "exercise" | "diet" | "lifestyle" | "mindfulness"
           }
         ],
-        "nutritionalAdvice": ["tip 1", "tip 2"]
+        "nutritionalAdvice": ["tip 1", "tip 2" (Max 3 tips, kept short)]
       }
     `;
 
@@ -106,13 +113,44 @@ export const generateHealthReport = async (profile: UserProfile): Promise<Health
   }
 };
 
+export const generateReportVisual = async (summary: string): Promise<string | undefined> => {
+  try {
+    const prompt = `Create a visually stunning, abstract, and uplifting digital art representation of this health summary: "${summary}". 
+    The image should represent vitality, balance, and the specific biological themes mentioned (e.g., blood cells, energy flow, nature). 
+    Do not include text in the image. Style: Modern, clean, medical-artistic fusion.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: {
+        parts: [{ text: prompt }],
+      },
+    });
+
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return part.inlineData.data;
+      }
+    }
+    return undefined;
+  } catch (error) {
+    console.error("Error generating report visual:", error);
+    // Non-blocking error, return undefined
+    return undefined;
+  }
+};
+
 export const generateAudioSummary = async (text: string): Promise<string> => {
   try {
-    const prompt = `Read the following health summary in a warm, encouraging, and professional tone. Speak clearly and at a moderate pace.\n\nText to read: "${text}"`;
+    // Simplify input text for TTS stability
+    // Remove markdown formatting characters like * or # which might cause issues
+    const cleanText = text.replace(/[*#_]/g, '');
+    
+    // Truncate to a safe length (e.g., 600 chars) to prevent timeout/size errors
+    const safeText = cleanText.length > 600 ? cleanText.substring(0, 600) + "." : cleanText;
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: prompt }] }],
+      contents: [{ parts: [{ text: safeText }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
@@ -131,6 +169,53 @@ export const generateAudioSummary = async (text: string): Promise<string> => {
     return audioData;
   } catch (error) {
     console.error("Error generating audio:", error);
+    throw error;
+  }
+};
+
+export const generateVeoVideo = async (imageBase64: string, promptText: string, aspectRatio: '16:9' | '9:16' = '16:9') => {
+  try {
+    // Check for API key selection (required for Veo)
+    const win = window as any;
+    if (win.aistudio && win.aistudio.hasSelectedApiKey) {
+        const hasKey = await win.aistudio.hasSelectedApiKey();
+        if (!hasKey) {
+            await win.aistudio.openSelectKey();
+        }
+    }
+
+    // Create a new instance to ensure we use the selected key
+    const veoAi = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
+    let operation = await veoAi.models.generateVideos({
+      model: 'veo-3.1-fast-generate-preview',
+      prompt: promptText,
+      image: {
+        imageBytes: imageBase64,
+        mimeType: 'image/jpeg', // Assuming jpeg/png for simplicity, API handles standard types
+      },
+      config: {
+        numberOfVideos: 1,
+        resolution: '720p',
+        aspectRatio: aspectRatio,
+      }
+    });
+
+    while (!operation.done) {
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Poll every 5s
+      operation = await veoAi.operations.getVideosOperation({operation: operation});
+    }
+
+    const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+    if (!downloadLink) throw new Error("No video URI returned");
+    
+    // Fetch the actual video bytes
+    const videoResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
+    const videoBlob = await videoResponse.blob();
+    return URL.createObjectURL(videoBlob);
+
+  } catch (error) {
+    console.error("Veo generation failed:", error);
     throw error;
   }
 };

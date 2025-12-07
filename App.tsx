@@ -1,41 +1,68 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppState, UserProfile, HealthReport } from './types';
 import { INITIAL_USER_PROFILE } from './constants';
-import { generateHealthReport } from './services/geminiService';
+import { generateHealthReport, generateReportVisual } from './services/geminiService';
 import Hero from './components/Hero';
 import BlogSection from './components/BlogSection';
 import HealthForm from './components/HealthForm';
 import LoadingScreen from './components/LoadingScreen';
 import ReportDashboard from './components/ReportDashboard';
 import BloodTypeBlog from './components/BloodTypeBlog';
-import { HeartPulse } from 'lucide-react';
+import { HeartPulse, ArrowUp } from 'lucide-react';
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.LANDING);
   const [userProfile, setUserProfile] = useState<UserProfile>(INITIAL_USER_PROFILE);
   const [report, setReport] = useState<HealthReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  // Scroll Listener for Floating Button
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.scrollY > 300) {
+        setShowScrollTop(true);
+      } else {
+        setShowScrollTop(false);
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
 
   const handleStart = () => {
     setAppState(AppState.FORM);
-    window.scrollTo(0, 0);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleOpenBloodBlog = () => {
     setAppState(AppState.BLOOD_BLOG);
-    window.scrollTo(0, 0);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleFormSubmit = async (data: UserProfile) => {
     setUserProfile(data);
     setAppState(AppState.LOADING);
     setError(null);
-    window.scrollTo(0, 0);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 
     try {
       const generatedReport = await generateHealthReport(data);
       setReport(generatedReport);
+      
+      // Move to report screen immediately with the text data
       setAppState(AppState.REPORT);
+
+      // Generate the visual in the background and update state when ready
+      generateReportVisual(generatedReport.summary).then(base64Image => {
+        if (base64Image) {
+            setReport(prev => prev ? ({ ...prev, visualBase64: base64Image }) : null);
+        }
+      });
+
     } catch (err) {
       console.error(err);
       setError("We encountered an issue analyzing your profile. Please check your connection and try again.");
@@ -47,11 +74,22 @@ const App: React.FC = () => {
     setUserProfile(INITIAL_USER_PROFILE);
     setReport(null);
     setAppState(AppState.LANDING);
-    window.scrollTo(0, 0);
+    // Use timeout to allow render cycle to complete before scrolling
+    setTimeout(() => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 10);
+  };
+
+  const handleScrollToHome = () => {
+    if (appState !== AppState.LANDING) {
+        handleReset();
+    } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col relative">
       {/* Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
         <nav className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -59,7 +97,7 @@ const App: React.FC = () => {
             <div className="bg-teal-600 p-1.5 rounded-lg">
                 <HeartPulse className="h-6 w-6 text-white" />
             </div>
-            <span className="text-xl font-bold text-gray-900 tracking-tight"> Your Ultimate Health Partner</span>
+            <span className="text-xl font-bold text-gray-900 tracking-tight">Your Ultimate Health Partner</span>
           </div>
           <div className="text-sm text-gray-500 hidden sm:block">
             Personalized Health Intelligence
@@ -82,7 +120,7 @@ const App: React.FC = () => {
         
         {appState === AppState.FORM && (
           <div className="py-8">
-            <HealthForm initialData={userProfile} onSubmit={handleFormSubmit} />
+            <HealthForm initialData={userProfile} onSubmit={handleFormSubmit} onCancel={handleReset} />
           </div>
         )}
 
@@ -108,6 +146,18 @@ const App: React.FC = () => {
           </div>
         )}
       </main>
+
+      {/* Floating Scroll/Home Button */}
+      {showScrollTop && (
+        <button
+          onClick={handleScrollToHome}
+          className="fixed bottom-8 right-8 z-50 p-4 rounded-full bg-teal-600 text-white shadow-xl hover:bg-teal-700 hover:shadow-2xl transition-all hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 animate-fadeIn"
+          aria-label="Back to Home"
+          title="Back to Home"
+        >
+          <ArrowUp className="h-6 w-6" />
+        </button>
+      )}
 
       {/* Footer */}
       <footer className="bg-white border-t border-gray-200 mt-auto">

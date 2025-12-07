@@ -1,11 +1,19 @@
-import React from 'react';
-import { ArrowLeft, Droplet, Shield, Dna, CreditCard, Check } from 'lucide-react';
+import React, { useState } from 'react';
+import { ArrowLeft, Droplet, Shield, Dna, CreditCard, Check, Download } from 'lucide-react';
+import PaymentModal from './PaymentModal';
 
 interface BloodTypeBlogProps {
   onBack: () => void;
 }
 
 const BloodTypeBlog: React.FC<BloodTypeBlogProps> = ({ onBack }) => {
+  const [showModal, setShowModal] = useState(false);
+  const [isUnlocked, setIsUnlocked] = useState(false);
+
+  const handlePaymentSuccess = () => {
+    setIsUnlocked(true);
+  };
+
   return (
     <div className="bg-white min-h-screen animate-fadeIn">
       {/* Header */}
@@ -56,44 +64,68 @@ const BloodTypeBlog: React.FC<BloodTypeBlogProps> = ({ onBack }) => {
         {/* Detailed Breakdown */}
         <div className="space-y-6">
             <h2 className="text-2xl font-bold text-gray-900 border-b pb-4">Blood Group Traits & Susceptibilities</h2>
+            <p className="text-gray-600 mb-4">
+                Emerging research in nutrigenomics suggests that your blood type may influence how you digest certain foods and handle stress. While not a rigid rulebook, these tendencies can guide personalized lifestyle choices.
+            </p>
             
-            <div className="space-y-4">
-                <div className="flex gap-4 items-start">
-                    <span className="bg-teal-100 text-teal-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1">Type O</span>
-                    <div>
-                        <h4 className="font-semibold text-gray-900">The Universal Donor (O-)</h4>
-                        <p className="text-gray-600 text-sm mt-1">
-                            Scientific studies suggest Type O individuals may have a lower risk of heart disease and blood clots but might be more susceptible to H. pylori infections and ulcers.
-                        </p>
+            <div className="space-y-6">
+                {/* Type O */}
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 transition-all hover:shadow-md">
+                    <div className="flex gap-4 items-start">
+                         <span className="bg-teal-100 text-teal-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1">Type O</span>
+                         <div>
+                             <h4 className="font-semibold text-gray-900 text-lg">The Hunter (Original)</h4>
+                             <div className="mt-3 space-y-2 text-gray-600 text-sm">
+                                <p><strong className="text-gray-800">Traits:</strong> Often characterized by higher stomach acid levels, which aids in protein digestion but can increase ulcer risk. Generally robust immune response and lower risk of heart disease.</p>
+                                <p><strong className="text-gray-800">Dietary Focus:</strong> Thrives on high-protein diets (lean meat, poultry, fish). Vegetables are beneficial, but grains, beans, and dairy might cause digestive issues due to metabolic tendencies.</p>
+                                <p><strong className="text-gray-800">Ideal Exercise:</strong> Vigorous physical activity stimulates the cardiovascular system and helps manage stress (e.g., running, interval training, martial arts).</p>
+                             </div>
+                         </div>
                     </div>
                 </div>
 
-                <div className="flex gap-4 items-start">
-                    <span className="bg-indigo-100 text-indigo-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1">Type A</span>
-                    <div>
-                        <h4 className="font-semibold text-gray-900">The Agrarian Type</h4>
-                        <p className="text-gray-600 text-sm mt-1">
-                            Research indicates Type A individuals often have naturally higher levels of cortisol (stress hormone) and may have a slightly elevated risk for cardiovascular issues compared to Type O.
-                        </p>
+                {/* Type A */}
+                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 transition-all hover:shadow-md">
+                    <div className="flex gap-4 items-start">
+                         <span className="bg-indigo-100 text-indigo-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1">Type A</span>
+                         <div>
+                             <h4 className="font-semibold text-gray-900 text-lg">The Agrarian (Cultivator)</h4>
+                             <div className="mt-3 space-y-2 text-gray-600 text-sm">
+                                <p><strong className="text-gray-800">Traits:</strong> Naturally higher cortisol levels make stress management crucial. May have a more sensitive digestive tract and immune system. Slightly elevated risk for cardiovascular issues.</p>
+                                <p><strong className="text-gray-800">Dietary Focus:</strong> Flourishes on a plant-based or vegetarian diet. Fresh, organic foods are best. Red meat is often difficult to digest and may cause lethargy.</p>
+                                <p><strong className="text-gray-800">Ideal Exercise:</strong> Calming, centering exercises that lower cortisol are most effective (e.g., Yoga, Tai Chi, light hiking).</p>
+                             </div>
+                         </div>
                     </div>
                 </div>
 
-                <div className="flex gap-4 items-start">
-                    <span className="bg-amber-100 text-amber-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1">Type B</span>
-                    <div>
-                        <h4 className="font-semibold text-gray-900">The Nomad</h4>
-                        <p className="text-gray-600 text-sm mt-1">
-                            Type B has been associated with a robust immune system. However, some studies link it to higher inflammation markers which requires a balanced diet rich in antioxidants.
-                        </p>
+                {/* Type B */}
+                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 transition-all hover:shadow-md">
+                    <div className="flex gap-4 items-start">
+                         <span className="bg-amber-100 text-amber-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1">Type B</span>
+                         <div>
+                             <h4 className="font-semibold text-gray-900 text-lg">The Nomad (Balanced)</h4>
+                             <div className="mt-3 space-y-2 text-gray-600 text-sm">
+                                <p><strong className="text-gray-800">Traits:</strong> Generally has a tolerant digestive system and robust immunity. However, susceptible to inflammation and cortisol imbalances if out of sync.</p>
+                                <p><strong className="text-gray-800">Dietary Focus:</strong> The most balanced diet, tolerating a variety of foods including meat (avoid chicken), dairy, grains, beans, and produce. Corn and wheat may affect metabolism.</p>
+                                <p><strong className="text-gray-800">Ideal Exercise:</strong> Moderate activities that combine physical and mental balance (e.g., Tennis, swimming, hiking, cycling).</p>
+                             </div>
+                         </div>
                     </div>
                 </div>
-                 <div className="flex gap-4 items-start">
-                    <span className="bg-purple-100 text-purple-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1">Type AB</span>
-                    <div>
-                        <h4 className="font-semibold text-gray-900">The Universal Recipient (AB+)</h4>
-                        <p className="text-gray-600 text-sm mt-1">
-                            The rarest blood type. Biologically, AB individuals share characteristics of both A and B types. Cognitive health preservation is a key focus area in recent longevity studies for this group.
-                        </p>
+
+                {/* Type AB */}
+                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 transition-all hover:shadow-md">
+                    <div className="flex gap-4 items-start">
+                         <span className="bg-purple-100 text-purple-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1">Type AB</span>
+                         <div>
+                             <h4 className="font-semibold text-gray-900 text-lg">The Enigma (Modern)</h4>
+                             <div className="mt-3 space-y-2 text-gray-600 text-sm">
+                                <p><strong className="text-gray-800">Traits:</strong> A biological complex with Type A's low stomach acid and Type B's adaptation to meats. Immune system is friendly but can be vulnerable to microbes. Cognitive health is a key focus.</p>
+                                <p><strong className="text-gray-800">Dietary Focus:</strong> Mixed diet. Tofu, seafood, dairy, and green vegetables are excellent. Avoid caffeine and alcohol when stressed. Eat smaller, frequent meals.</p>
+                                <p><strong className="text-gray-800">Ideal Exercise:</strong> A combination of calming activities and moderate intensity exercise works best to maintain equilibrium.</p>
+                             </div>
+                         </div>
                     </div>
                 </div>
             </div>
@@ -128,15 +160,33 @@ const BloodTypeBlog: React.FC<BloodTypeBlogProps> = ({ onBack }) => {
                     </div>
                 </div>
 
-                <button className="w-full bg-teal-500 hover:bg-teal-400 text-white font-bold py-4 px-8 rounded-xl transition-all shadow-lg hover:shadow-teal-500/25 flex items-center justify-center gap-3 group">
+                {isUnlocked ? (
+                  <button className="w-full bg-green-500 hover:bg-green-400 text-white font-bold py-4 px-8 rounded-xl transition-all shadow-lg flex items-center justify-center gap-3 animate-bounce">
+                    <Download className="h-5 w-5" />
+                    Download Your Genetic Map (PDF)
+                  </button>
+                ) : (
+                  <button 
+                    onClick={() => setShowModal(true)}
+                    className="w-full bg-teal-500 hover:bg-teal-400 text-white font-bold py-4 px-8 rounded-xl transition-all shadow-lg hover:shadow-teal-500/25 flex items-center justify-center gap-3 group transform hover:-translate-y-0.5"
+                  >
                     <CreditCard className="h-5 w-5" />
-                    Unlock Premium Report — $19.99
-                </button>
+                    Buy Now — Unlock Premium Report ($19.99)
+                  </button>
+                )}
+                
                 <p className="mt-4 text-xs text-slate-400">
                     Secure 256-bit SSL encrypted payment. 30-day money-back guarantee.
                 </p>
             </div>
         </div>
+
+        <PaymentModal 
+          isOpen={showModal} 
+          onClose={() => setShowModal(false)} 
+          onSuccess={handlePaymentSuccess}
+          price="$19.99"
+        />
       </div>
     </div>
   );

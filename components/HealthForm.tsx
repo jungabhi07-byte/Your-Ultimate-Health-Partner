@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { UserProfile } from '../types';
 import { BLOOD_GROUPS, ACTIVITY_LEVELS, DIETARY_PREFERENCES } from '../constants';
-import { ChevronRight, ChevronLeft, User, Droplet, Activity, Utensils, Mic, MicOff, Loader2 } from 'lucide-react';
+import { ChevronRight, ChevronLeft, User, Droplet, Activity, Utensils, Mic, MicOff, AlertCircle, X } from 'lucide-react';
 
 // Type definitions for Web Speech API
 declare global {
@@ -14,13 +14,33 @@ declare global {
 interface HealthFormProps {
   initialData: UserProfile;
   onSubmit: (data: UserProfile) => void;
+  onCancel: () => void;
 }
 
-const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit }) => {
+const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel }) => {
   const [data, setData] = useState<UserProfile>(initialData);
   const [step, setStep] = useState(1);
   const [listeningField, setListeningField] = useState<keyof UserProfile | null>(null);
   const [speechError, setSpeechError] = useState<string | null>(null);
+  
+  // Ref to store the recognition instance to manage lifecycle (abort/stop)
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (speechError) {
+      const timer = setTimeout(() => setSpeechError(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [speechError]);
+
+  // Cleanup recognition on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+      }
+    };
+  }, []);
 
   const handleChange = (field: keyof UserProfile, value: string) => {
     setData(prev => ({ ...prev, [field]: value }));
@@ -29,15 +49,28 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit }) => {
   const handleNext = () => setStep(prev => prev + 1);
   const handlePrev = () => setStep(prev => prev - 1);
 
+  const stopListening = useCallback(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      setListeningField(null);
+    }
+  }, []);
+
   // Voice Input Logic
   const startListening = useCallback((field: keyof UserProfile) => {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      alert("Voice input is not supported in this browser.");
+      setSpeechError("Voice input is not supported in this browser.");
       return;
+    }
+
+    // Abort any existing session
+    if (recognitionRef.current) {
+      recognitionRef.current.abort();
     }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
     
     recognition.continuous = false;
     recognition.interimResults = false;
@@ -49,26 +82,47 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit }) => {
     };
 
     recognition.onend = () => {
+      // Small delay to prevent flickering if restarting immediately
       setListeningField(null);
+      recognitionRef.current = null;
     };
 
     recognition.onerror = (event: any) => {
       console.error("Speech recognition error", event.error);
-      setSpeechError("Could not hear you. Please try again.");
+      let errorMessage = "Could not hear you. Please try again.";
+      
+      if (event.error === 'aborted') {
+        // User stopped it manually or clicked another field, ignore
+        setListeningField(null);
+        return; 
+      } else if (event.error === 'no-speech') {
+        errorMessage = "No speech detected. Please speak closer to the mic.";
+      } else if (event.error === 'audio-capture') {
+        errorMessage = "No microphone found. Check your system settings.";
+      } else if (event.error === 'not-allowed') {
+        errorMessage = "Microphone permission denied. Allow access to use voice.";
+      }
+      
+      setSpeechError(errorMessage);
       setListeningField(null);
     };
 
     recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript.toLowerCase();
+      const transcript = event.results[0][0].transcript;
       processVoiceInput(field, transcript);
     };
 
-    recognition.start();
-  }, [data]);
+    try {
+        recognition.start();
+    } catch (e) {
+        console.error("Failed to start recognition", e);
+    }
+  }, [data]); // Depend on data if needed, or remove if processVoiceInput is stable
 
   const processVoiceInput = (field: keyof UserProfile, text: string) => {
     console.log(`Voice Input for ${field}: ${text}`);
     let value = text;
+    let foundMatch = false;
 
     // Parsing logic based on field type
     if (field === 'age' || field === 'weight' || field === 'height') {
@@ -76,33 +130,76 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit }) => {
       const numberMatch = text.match(/\d+(\.\d+)?/);
       if (numberMatch) {
         value = numberMatch[0];
+        foundMatch = true;
       }
     } else if (field === 'gender') {
-      if (text.includes('female') || text.includes('woman') || text.includes('girl')) value = 'Female';
-      else if (text.includes('male') || text.includes('man') || text.includes('boy')) value = 'Male';
-      else if (text.includes('other')) value = 'Other';
-      else value = 'Male'; // Default fallback or keep raw if unsure, but for select we need exact match usually
+      const lowerText = text.toLowerCase();
+      // Map natural language to valid Gender options
+      if (/\b(female|woman|girl|she|her)\b/.test(lowerText)) {
+        value = 'Female';
+        foundMatch = true;
+      } else if (/\b(male|man|boy|he|him)\b/.test(lowerText)) {
+        value = 'Male';
+        foundMatch = true;
+      } else if (lowerText.includes('other')) {
+        value = 'Other';
+        foundMatch = true;
+      }
     } else if (field === 'bloodGroup') {
       // Normalize spoken blood groups
-      let clean = text.replace('negative', '-').replace('minus', '-').replace('positive', '+').replace('plus', '+');
-      // Remove spaces for things like "a positive" -> "a+"
-      clean = clean.replace(/\s/g, '').toUpperCase();
+      let clean = text.toLowerCase();
+      clean = clean.replace(/positive|plus|pos/, '+');
+      clean = clean.replace(/negative|minus|neg/, '-');
+      // Remove "type" and spaces, e.g., "type a positive" -> "a+"
+      clean = clean.replace('type', '').replace(/\s/g, '').toUpperCase();
       
-      // Try to find a valid blood group in the string
-      const match = BLOOD_GROUPS.find(bg => clean.includes(bg));
-      if (match) value = match;
+      // Sort groups by length descending so "AB+" matches before "A+" or "B+"
+      const sortedGroups = [...BLOOD_GROUPS].sort((a, b) => b.length - a.length);
+      const match = sortedGroups.find(bg => clean.includes(bg));
+      
+      if (match) {
+        value = match;
+        foundMatch = true;
+      }
     } else if (field === 'activityLevel') {
-      if (text.includes('sedentary') || text.includes('lazy') || text.includes('little')) value = 'sedentary';
-      else if (text.includes('light')) value = 'light';
-      else if (text.includes('moderate') || text.includes('medium')) value = 'moderate';
-      else if (text.includes('super') || text.includes('athlete')) value = 'athlete'; // Check super active first
-      else if (text.includes('active') || text.includes('hard')) value = 'active';
+      const lower = text.toLowerCase();
+      // Heuristic matching for activity levels
+      if (/\b(sedentary|lazy|little|none|couch)\b/.test(lower)) {
+        value = 'sedentary';
+        foundMatch = true;
+      } else if (/\b(light|lightly|walk|mild)\b/.test(lower)) {
+        value = 'light';
+        foundMatch = true;
+      } else if (/\b(moderate|medium|average)\b/.test(lower)) {
+        value = 'moderate';
+        foundMatch = true;
+      } else if (/\b(super|athlete|pro|intense)\b/.test(lower)) {
+        value = 'athlete';
+        foundMatch = true;
+      } else if (/\b(active|hard|heavy|gym)\b/.test(lower)) {
+        value = 'active'; 
+        foundMatch = true;
+      }
     } else if (field === 'dietaryPreference') {
-      const match = DIETARY_PREFERENCES.find(pref => text.includes(pref.toLowerCase()));
-      if (match) value = match;
+      const lower = text.toLowerCase();
+      const match = DIETARY_PREFERENCES.find(pref => lower.includes(pref.toLowerCase()));
+      if (match) {
+        value = match;
+        foundMatch = true;
+      } else if (lower.includes('no') || lower.includes('none') || lower.includes('all')) {
+        value = 'No Restrictions';
+        foundMatch = true;
+      }
+    } else {
+        // For open text fields like medicalHistory, we accept whatever is spoken
+        foundMatch = true;
     }
 
-    handleChange(field, value);
+    if (foundMatch) {
+        handleChange(field, value);
+    } else {
+        setSpeechError(`Could not recognize a valid ${field}. Please try saying it again.`);
+    }
   };
 
   // Reusable Voice Button Component
@@ -110,13 +207,13 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit }) => {
     const isListening = listeningField === field;
     return (
       <button
-        onClick={() => isListening ? null : startListening(field)}
+        onClick={() => isListening ? stopListening() : startListening(field)}
         className={`p-2 rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 ${
           isListening 
             ? 'bg-rose-100 text-rose-600 ring-rose-400 animate-pulse' 
             : 'text-gray-400 hover:text-teal-600 hover:bg-teal-50'
         } ${className}`}
-        title="Tap to speak"
+        title={isListening ? "Stop listening" : "Tap to speak"}
         type="button"
       >
         {isListening ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
@@ -161,7 +258,7 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit }) => {
                         type="number"
                         value={data.age}
                         onChange={(e) => handleChange('age', e.target.value)}
-                        className="w-full rounded-lg border-gray-300 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
+                        className="w-full rounded-lg border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
                         placeholder="Years"
                     />
                   </div>
@@ -174,7 +271,7 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit }) => {
                   <select
                     value={data.gender}
                     onChange={(e) => handleChange('gender', e.target.value)}
-                    className="w-full rounded-lg border-gray-300 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
+                    className="w-full rounded-lg border-gray-300 bg-white text-gray-900 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
                   >
                     <option value="">Select...</option>
                     <option value="Male">Male</option>
@@ -191,7 +288,7 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit }) => {
                     type="number"
                     value={data.weight}
                     onChange={(e) => handleChange('weight', e.target.value)}
-                    className="w-full rounded-lg border-gray-300 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
+                    className="w-full rounded-lg border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
                     placeholder="kg"
                   />
                 </div>
@@ -204,13 +301,19 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit }) => {
                     type="number"
                     value={data.height}
                     onChange={(e) => handleChange('height', e.target.value)}
-                    className="w-full rounded-lg border-gray-300 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
+                    className="w-full rounded-lg border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
                     placeholder="cm"
                   />
                 </div>
               </div>
 
-              <div className="pt-4 flex justify-end">
+              <div className="pt-4 flex justify-between">
+                <button
+                  onClick={onCancel}
+                  className="inline-flex items-center px-6 py-3 border border-gray-200 text-base font-medium rounded-md text-gray-600 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-300 transition-all"
+                >
+                  Cancel
+                </button>
                 <button
                   onClick={handleNext}
                   disabled={!isStep1Valid}
@@ -261,7 +364,7 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit }) => {
                   <select
                     value={data.activityLevel}
                     onChange={(e) => handleChange('activityLevel', e.target.value)}
-                    className="w-full rounded-lg border-gray-300 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
+                    className="w-full rounded-lg border-gray-300 bg-white text-gray-900 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
                   >
                     <option value="">Select Level...</option>
                     {ACTIVITY_LEVELS.map(level => (
@@ -306,7 +409,7 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit }) => {
                   <select
                     value={data.dietaryPreference}
                     onChange={(e) => handleChange('dietaryPreference', e.target.value)}
-                    className="w-full rounded-lg border-gray-300 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
+                    className="w-full rounded-lg border-gray-300 bg-white text-gray-900 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
                   >
                     {DIETARY_PREFERENCES.map(pref => (
                       <option key={pref} value={pref}>{pref}</option>
@@ -323,7 +426,7 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit }) => {
                     rows={4}
                     value={data.medicalHistory}
                     onChange={(e) => handleChange('medicalHistory', e.target.value)}
-                    className="w-full rounded-lg border-gray-300 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
+                    className="w-full rounded-lg border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 shadow-sm focus:border-teal-500 focus:ring-teal-500 p-2.5 border"
                     placeholder="e.g., Diabetes in family, knee pain, low blood pressure..."
                   />
                   <p className="mt-1 text-xs text-gray-500">
@@ -350,11 +453,11 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit }) => {
           )}
         </div>
         
-        {/* Global Speech Indicator/Error */}
-        {listeningField && (
-            <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2 shadow-lg animate-bounce">
-                <div className="h-2 w-2 bg-red-500 rounded-full animate-ping"></div>
-                Listening...
+        {/* Global Error Indicator */}
+        {speechError && (
+             <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-rose-600 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2 shadow-lg animate-fadeIn z-10 transition-opacity">
+                <AlertCircle className="h-4 w-4" />
+                {speechError}
             </div>
         )}
       </div>

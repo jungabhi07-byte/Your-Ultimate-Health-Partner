@@ -31,6 +31,7 @@ export interface HealthReport {
   dailyRoutine: DailyActivity[];
   nutritionalAdvice: string[];
   sources?: Source[];
+  visualBase64?: string;
 }
 
 export enum AppState {
