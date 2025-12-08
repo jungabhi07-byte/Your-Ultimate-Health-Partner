@@ -32,6 +32,8 @@ export interface HealthReport {
   nutritionalAdvice: string[];
   sources?: Source[];
   visualBase64?: string;
+  date?: string; // ISO String date of assessment
+  trendAnalysis?: string; // AI insight on progress since last check
 }
 
 export enum AppState {

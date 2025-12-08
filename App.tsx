@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AppState, UserProfile, HealthReport } from './types';
 import { INITIAL_USER_PROFILE } from './constants';
 import { generateHealthReport, generateReportVisual } from './services/geminiService';
+import { getHistory, saveReportToHistory, getLatestReport } from './services/storageService';
 import Hero from './components/Hero';
 import BlogSection from './components/BlogSection';
 import HealthForm from './components/HealthForm';
@@ -14,8 +15,15 @@ const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.LANDING);
   const [userProfile, setUserProfile] = useState<UserProfile>(INITIAL_USER_PROFILE);
   const [report, setReport] = useState<HealthReport | null>(null);
+  const [previousReport, setPreviousReport] = useState<HealthReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
+
+  // Load history on mount
+  useEffect(() => {
+    const latest = getLatestReport();
+    setPreviousReport(latest);
+  }, []);
 
   // Scroll Listener for Floating Button
   useEffect(() => {
@@ -50,8 +58,16 @@ const App: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
     try {
-      const generatedReport = await generateHealthReport(data);
+      // Pass history to AI service
+      const history = getHistory();
+      const generatedReport = await generateHealthReport(data, history);
+      
       setReport(generatedReport);
+      
+      // Save to local history
+      saveReportToHistory(generatedReport);
+      // Update previous report state for next time
+      setPreviousReport(generatedReport);
       
       // Move to report screen immediately with the text data
       setAppState(AppState.REPORT);
@@ -80,12 +96,8 @@ const App: React.FC = () => {
     }, 10);
   };
 
-  const handleScrollToHome = () => {
-    if (appState !== AppState.LANDING) {
-        handleReset();
-    } else {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
+  const handleScrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
@@ -127,7 +139,11 @@ const App: React.FC = () => {
         {appState === AppState.LOADING && <LoadingScreen />}
 
         {appState === AppState.REPORT && report && (
-          <ReportDashboard report={report} onReset={handleReset} />
+          <ReportDashboard 
+            report={report} 
+            onReset={handleReset} 
+            previousReport={previousReport} // Pass the "previous" one (logic handled in App to ensure it's not the same as current if freshly generated, but simple use case is fine)
+          />
         )}
 
         {appState === AppState.ERROR && (
@@ -147,13 +163,13 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* Floating Scroll/Home Button */}
+      {/* Floating Scroll Top Button */}
       {showScrollTop && (
         <button
-          onClick={handleScrollToHome}
+          onClick={handleScrollToTop}
           className="fixed bottom-8 right-8 z-50 p-4 rounded-full bg-teal-600 text-white shadow-xl hover:bg-teal-700 hover:shadow-2xl transition-all hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 animate-fadeIn"
-          aria-label="Back to Home"
-          title="Back to Home"
+          aria-label="Scroll to top"
+          title="Scroll to top"
         >
           <ArrowUp className="h-6 w-6" />
         </button>

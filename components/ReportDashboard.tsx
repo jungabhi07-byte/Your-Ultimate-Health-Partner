@@ -14,17 +14,20 @@ import {
   ExternalLink,
   Loader2,
   Image as ImageIcon,
-  ArrowLeft
+  ArrowLeft,
+  TrendingUp,
+  Volume2
 } from 'lucide-react';
 import { generateAudioSummary } from '../services/geminiService';
 import HealthChart from './HealthChart';
 
 interface ReportDashboardProps {
   report: HealthReport;
+  previousReport?: HealthReport | null;
   onReset: () => void;
 }
 
-const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) => {
+const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousReport, onReset }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   // Store the raw base64 string to avoid repeated fetches
@@ -32,9 +35,13 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
   
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const startTimeRef = useRef<number>(0);
   const pausedTimeRef = useRef<number>(0);
+  const rafRef = useRef<number>(0);
 
   // Pre-fetch audio when report loads
   useEffect(() => {
@@ -60,26 +67,80 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
     return () => { isMounted = false; };
   }, [report.summary]);
 
+  // Animation Loop for Progress Bar
+  useEffect(() => {
+    const animate = () => {
+        if (audioContext && isPlaying) {
+            const elapsed = audioContext.currentTime - startTimeRef.current;
+            // Clamp to duration
+            const current = Math.min(elapsed, duration);
+            setCurrentTime(current);
+            rafRef.current = requestAnimationFrame(animate);
+        }
+    };
+
+    if (isPlaying) {
+        rafRef.current = requestAnimationFrame(animate);
+    } else {
+        cancelAnimationFrame(rafRef.current);
+    }
+
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [isPlaying, audioContext, duration]);
+
   // Calculate Chart Data based on report metrics
-  const bmiScore = report.bmiCategory === 'Normal' ? 95 : 
-                   report.bmiCategory === 'Overweight' ? 75 : 
-                   report.bmiCategory === 'Underweight' ? 70 : 50;
+  const calculateMetrics = (r: HealthReport) => {
+      const bmiScore = r.bmiCategory === 'Normal' ? 95 : 
+                       r.bmiCategory === 'Overweight' ? 75 : 
+                       r.bmiCategory === 'Underweight' ? 70 : 50;
+      
+      const riskScore = Math.max(20, 100 - (r.potentialRisks.length * 15));
+      const strengthScore = Math.min(100, 50 + (r.keyStrengths.length * 10));
+      const routineScore = Math.min(100, 60 + (r.dailyRoutine.length * 5));
+      
+      return { bmiScore, riskScore, strengthScore, routineScore };
+  };
+
+  const currentMetrics = calculateMetrics(report);
   
-  // Fewer risks = higher score (min 20)
-  const riskScore = Math.max(20, 100 - (report.potentialRisks.length * 15));
-  
-  // More strengths = higher score (max 100, base 50)
-  const strengthScore = Math.min(100, 50 + (report.keyStrengths.length * 10));
-  
-  // Activity/Routine balance - derived estimation
-  const routineScore = Math.min(100, 60 + (report.dailyRoutine.length * 5));
+  // Calculate previous metrics if they represent a DIFFERENT assessment (check date)
+  let previousMetrics = null;
+  // Simple check: if we have a previous report and it's not the exact same date stamp (or object ref)
+  if (previousReport && previousReport.date !== report.date) {
+      previousMetrics = calculateMetrics(previousReport);
+  }
 
   const chartData = [
-    { subject: 'Overall Wellness', value: report.overallHealthScore, fullMark: 100 },
-    { subject: 'BMI Health', value: bmiScore, fullMark: 100 },
-    { subject: 'Risk Control', value: riskScore, fullMark: 100 },
-    { subject: 'Vitality', value: strengthScore, fullMark: 100 },
-    { subject: 'Lifestyle', value: routineScore, fullMark: 100 },
+    { 
+        subject: 'Overall Wellness', 
+        value: report.overallHealthScore, 
+        previousValue: previousMetrics ? previousReport?.overallHealthScore : undefined,
+        fullMark: 100 
+    },
+    { 
+        subject: 'BMI Health', 
+        value: currentMetrics.bmiScore, 
+        previousValue: previousMetrics?.bmiScore,
+        fullMark: 100 
+    },
+    { 
+        subject: 'Risk Control', 
+        value: currentMetrics.riskScore, 
+        previousValue: previousMetrics?.riskScore,
+        fullMark: 100 
+    },
+    { 
+        subject: 'Vitality', 
+        value: currentMetrics.strengthScore, 
+        previousValue: previousMetrics?.strengthScore,
+        fullMark: 100 
+    },
+    { 
+        subject: 'Lifestyle', 
+        value: currentMetrics.routineScore, 
+        previousValue: previousMetrics?.routineScore,
+        fullMark: 100 
+    },
   ];
 
   const getIconForActivity = (type: string) => {
@@ -100,6 +161,12 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
     return <Calendar className="h-5 w-5 text-gray-400" />;
   };
 
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -109,6 +176,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
       if (audioContext && audioContext.state !== 'closed') {
         audioContext.close();
       }
+      cancelAnimationFrame(rafRef.current);
     };
   }, []);
 
@@ -146,7 +214,9 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
         } catch (e) {
             // ignore
         }
-        pausedTimeRef.current = audioContext.currentTime - startTimeRef.current;
+        const elapsed = audioContext.currentTime - startTimeRef.current;
+        pausedTimeRef.current = elapsed;
+        setCurrentTime(elapsed); // Sync visual state
         setIsPlaying(false);
       }
       return;
@@ -172,6 +242,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
             const base64Audio = await generateAudioSummary(report.summary);
             const decodedBuffer = decodePCM(base64Audio, ctx);
             setAudioBuffer(decodedBuffer);
+            setDuration(decodedBuffer.duration);
             playBuffer(ctx, decodedBuffer, 0);
           } catch (err) {
             console.error("Audio playback failed", err);
@@ -184,13 +255,17 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
           try {
             const decodedBuffer = decodePCM(dataToDecode, ctx);
             setAudioBuffer(decodedBuffer);
+            setDuration(decodedBuffer.duration);
             playBuffer(ctx, decodedBuffer, 0);
           } catch (err) {
              console.error("Audio decode failed", err);
           }
       }
     } else {
-      playBuffer(ctx, audioBuffer, pausedTimeRef.current);
+      // If completed, restart. If paused, resume.
+      // If we reached the end visually (approx), reset to 0
+      const startOffset = currentTime >= duration ? 0 : pausedTimeRef.current;
+      playBuffer(ctx, audioBuffer, startOffset);
     }
   };
 
@@ -204,7 +279,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
     source.connect(ctx.destination);
     
     source.onended = () => {
-       // Handled by manual state reset timeout usually for UI sync
+       // Only handle naturally ending, not forced stops via button
     };
 
     source.start(0, startOffset);
@@ -212,13 +287,16 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
     sourceNodeRef.current = source;
     setIsPlaying(true);
     
-    const duration = buffer.duration - startOffset;
+    const durationRemaining = buffer.duration - startOffset;
+    
+    // Auto reset when done
     setTimeout(() => {
         if (sourceNodeRef.current === source) {
              setIsPlaying(false);
              pausedTimeRef.current = 0;
+             setCurrentTime(0);
         }
-    }, duration * 1000 + 200); 
+    }, durationRemaining * 1000 + 200); 
   };
 
   return (
@@ -259,30 +337,50 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
 
         <div className="p-8 md:flex gap-8 items-stretch">
           <div className="flex-1 space-y-4">
-            <div className="flex justify-between items-start">
-               <div className="flex gap-4 items-center">
+            
+            {/* Audio Player Controls */}
+            <div className="flex flex-col gap-2 w-full max-w-lg mb-4 bg-gray-50 p-3 rounded-xl border border-gray-100">
+               <div className="flex items-center gap-3">
                     <button 
                         onClick={handlePlayAudio}
                         disabled={isLoadingAudio}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${
+                        className={`flex-shrink-0 flex items-center justify-center h-10 w-10 rounded-full transition-all ${
                             isPlaying 
-                            ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' 
-                            : 'bg-teal-100 text-teal-700 hover:bg-teal-200'
+                            ? 'bg-rose-100 text-rose-600 hover:bg-rose-200' 
+                            : 'bg-teal-600 text-white hover:bg-teal-700 shadow-md hover:shadow-lg'
                         }`}
+                        title={isPlaying ? "Pause" : "Play Summary"}
                     >
                         {isLoadingAudio ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
                         ) : isPlaying ? (
-                            <Pause className="h-4 w-4" />
+                            <Pause className="h-4 w-4 fill-current" />
                         ) : (
-                            <Play className="h-4 w-4" />
+                            <Play className="h-4 w-4 fill-current ml-0.5" />
                         )}
-                        {isPlaying ? 'Pause Summary' : 'Listen to Summary'}
                     </button>
-                    {!report.visualBase64 && (
-                        <span className="text-xs text-gray-400 italic">Visual generation pending...</span>
-                    )}
+                    
+                    <div className="flex-1">
+                        <div className="flex justify-between items-center text-xs font-medium text-gray-500 mb-1.5">
+                            <span>{isPlaying ? 'Playing Summary...' : (currentTime > 0 ? 'Paused' : 'Listen to AI Summary')}</span>
+                            {(duration > 0) && (
+                                <span>{formatTime(currentTime)} / {formatTime(duration)}</span>
+                            )}
+                        </div>
+                        {/* Progress Bar */}
+                        <div className="h-2 bg-gray-200 rounded-full overflow-hidden relative">
+                            <div 
+                                className={`absolute top-0 left-0 h-full rounded-full transition-all duration-100 ease-linear ${isPlaying ? 'bg-teal-500' : 'bg-gray-400'}`}
+                                style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                            />
+                        </div>
+                    </div>
                </div>
+               {!report.visualBase64 && !preloadedAudioBase64 && !isLoadingAudio && (
+                   <div className="text-[10px] text-gray-400 pl-1">
+                      Audio generating in background...
+                   </div>
+               )}
             </div>
             
             <div className="flex items-center gap-2">
@@ -294,6 +392,17 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
                  </span>
             </div>
             <p className="text-gray-600 leading-relaxed text-lg">{report.summary}</p>
+            
+            {/* Trend Analysis Section - Shows "Learning Adaptability" */}
+            {report.trendAnalysis && (
+                <div className="mt-4 p-4 bg-indigo-50 rounded-lg border border-indigo-100 flex items-start gap-3">
+                    <TrendingUp className="h-5 w-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                        <h4 className="font-semibold text-indigo-900 text-sm">Progress & Adaptability</h4>
+                        <p className="text-indigo-800 text-sm">{report.trendAnalysis}</p>
+                    </div>
+                </div>
+            )}
           </div>
           
           <div className="mt-8 md:mt-0 md:w-1/3 flex flex-col items-center justify-center p-4 bg-slate-50 rounded-xl border border-gray-100 relative min-h-[250px]">

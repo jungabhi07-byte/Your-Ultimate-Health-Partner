@@ -1,3 +1,4 @@
+
 export const BLOOD_GROUPS = [
   'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'
 ];
@@ -11,14 +12,13 @@ export const ACTIVITY_LEVELS = [
 ];
 
 export const DIETARY_PREFERENCES = [
-  'No Restrictions',
-  'Vegetarian',
-  'Vegan',
-  'Pescatarian',
-  'Keto',
-  'Paleo',
+  'I eat everything',
+  'Vegetarian (No meat)',
+  'Vegan (Plants only)',
+  'Pescatarian (Fish allowed)',
+  'Low Carb / Keto',
   'Gluten-Free',
-  'Lactose-Free'
+  'Dairy-Free'
 ];
 
 export const INITIAL_USER_PROFILE = {
@@ -29,5 +29,5 @@ export const INITIAL_USER_PROFILE = {
   height: '',
   activityLevel: 'moderate',
   medicalHistory: '',
-  dietaryPreference: 'No Restrictions'
+  dietaryPreference: 'I eat everything'
 };

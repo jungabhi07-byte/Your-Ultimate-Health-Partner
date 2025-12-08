@@ -12,11 +12,26 @@ const cleanJsonString = (str: string) => {
   if (firstBrace !== -1 && lastBrace !== -1) {
     cleaned = cleaned.substring(firstBrace, lastBrace + 1);
   }
+  // Regex to remove trailing commas before closing braces/brackets (common AI JSON error)
+  cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1');
+  
   return cleaned;
 };
 
-export const generateHealthReport = async (profile: UserProfile): Promise<HealthReport> => {
+export const generateHealthReport = async (profile: UserProfile, history: HealthReport[] = []): Promise<HealthReport> => {
   try {
+    // Construct History Context
+    let historyContext = "No previous data available. This is the first assessment.";
+    if (history.length > 0) {
+        const last = history[0]; // Assuming sorted descending
+        historyContext = `
+        PREVIOUS ASSESSMENT (${new Date(last.date || '').toLocaleDateString()}):
+        - Previous Overall Score: ${last.overallHealthScore}
+        - Previous BMI: ${last.bmi}
+        - Previous Risks: ${last.potentialRisks.slice(0, 2).join(", ")}
+        `;
+    }
+
     const prompt = `
       Act as a world-class preventative health consultant and nutritionist. 
       Analyze the following user profile and generate a SIMPLE, CONCISE, and INTERESTING health report.
@@ -31,12 +46,16 @@ export const generateHealthReport = async (profile: UserProfile): Promise<Health
       - Dietary Preference: ${profile.dietaryPreference}
       - Medical History/Concerns: ${profile.medicalHistory || "None stated"}
 
+      History Context for Learning/Adaptability:
+      ${historyContext}
+
       Instructions:
       1. Calculate BMI accurately.
       2. **Holistic Health Score (0-100):** Do NOT rely solely on BMI. Evaluate overall health based on WHO and CDC guidelines. Consider age, activity level, and medical history.
       3. USE GOOGLE SEARCH to find interesting and specific facts about the user's Blood Group and health risks.
-      4. Provide practical, actionable advice. KEEP IT SIMPLE.
-      5. Create a structured daily routine.
+      4. **Trend Analysis:** Compare the current profile with the History Context. Did they improve? Did they regress? What specifically changed?
+      5. Provide practical, actionable advice. KEEP IT SIMPLE.
+      6. Create a structured daily routine.
       
       CRITICAL TONE INSTRUCTION:
       - Address the user directly as "You" and "Your".
@@ -46,12 +65,14 @@ export const generateHealthReport = async (profile: UserProfile): Promise<Health
       
       CRITICAL OUTPUT FORMAT:
       - You MUST return the result as a VALID JSON OBJECT. Do not include markdown formatting or any introductory text.
+      - **DO NOT USE TRAILING COMMAS** in arrays or objects.
       
       The JSON structure must match this exactly:
       {
         "bmi": number,
         "bmiCategory": "Underweight" | "Normal" | "Overweight" | "Obese",
         "overallHealthScore": number (0-100),
+        "trendAnalysis": "A 1-2 sentence analysis comparing current results to previous history. e.g., 'Your score improved by 5 points due to better weight management.' or 'Maintain consistency as metrics are stable.' If no history, say 'Welcome to your first assessment; we will track your progress from here.'",
         "summary": "Short, punchy, and engaging summary. Maximum 3 sentences. Focus on the big picture.",
         "potentialRisks": ["risk 1", "risk 2" (Max 3 items, kept short)],
         "keyStrengths": ["strength 1", "strength 2" (Max 3 items, kept short)],
@@ -68,11 +89,10 @@ export const generateHealthReport = async (profile: UserProfile): Promise<Health
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash", // Updated to allow tools
+      model: "gemini-2.5-flash", 
       contents: prompt,
       config: {
         tools: [{ googleSearch: {} }],
-        // responseSchema and responseMimeType are NOT allowed when using googleSearch tool
       },
     });
 
@@ -104,6 +124,7 @@ export const generateHealthReport = async (profile: UserProfile): Promise<Health
     const uniqueSources = Array.from(uniqueSourcesMap.values());
     
     report.sources = uniqueSources;
+    report.date = new Date().toISOString(); // Stamp generation time
 
     return report;
 

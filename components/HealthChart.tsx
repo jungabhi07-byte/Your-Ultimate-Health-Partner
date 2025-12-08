@@ -11,8 +11,9 @@ export interface HealthChartProps {
 
 const HealthChart: React.FC<HealthChartProps> = ({ data }) => {
   // Extract overall score for the donut chart
-  const overallData = data.find(d => d.subject === 'Overall Wellness') || { value: 0 };
-  const score = overallData.value;
+  const overallData = data.find(d => d.subject === 'Overall Wellness');
+  const score = overallData?.value || 0;
+  const prevScore = overallData?.previousValue;
   
   // Filter out the overall score for the bar list
   const detailedMetrics = data.filter(d => d.subject !== 'Overall Wellness');
@@ -47,6 +48,7 @@ const HealthChart: React.FC<HealthChartProps> = ({ data }) => {
             width="100%"
             className="transform -rotate-90"
           >
+            {/* Background Ring */}
             <circle
               stroke="#e2e8f0"
               strokeWidth={stroke}
@@ -55,6 +57,7 @@ const HealthChart: React.FC<HealthChartProps> = ({ data }) => {
               cx="50%"
               cy="50%"
             />
+            {/* Progress Ring */}
             <circle
               className={`transition-all duration-1000 ease-out ${getColor(score)}`}
               stroke="currentColor"
@@ -73,6 +76,11 @@ const HealthChart: React.FC<HealthChartProps> = ({ data }) => {
                 {score}<span className="text-sm text-gray-400 font-normal">/100</span>
             </span>
             <span className="text-[10px] uppercase text-gray-400 font-semibold mt-0.5">Score</span>
+            {prevScore !== undefined && (
+                <span className={`text-[10px] font-medium mt-1 ${score >= prevScore ? 'text-green-500' : 'text-red-500'}`}>
+                    {score >= prevScore ? '↑' : '↓'} {Math.abs(score - prevScore)}
+                </span>
+            )}
           </div>
         </div>
         
@@ -90,11 +98,24 @@ const HealthChart: React.FC<HealthChartProps> = ({ data }) => {
             <div key={idx}>
                 <div className="flex justify-between text-xs font-medium mb-1">
                     <span className="text-gray-600">{metric.subject}</span>
-                    <span className="text-gray-900">{metric.value}/100</span>
+                    <div className="flex items-center gap-2">
+                        {metric.previousValue !== undefined && (
+                            <span className="text-gray-400 text-[10px]">Prev: {metric.previousValue}</span>
+                        )}
+                        <span className="text-gray-900">{metric.value}/100</span>
+                    </div>
                 </div>
-                <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+                <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden relative">
+                    {/* Previous Value Ghost Bar */}
+                    {metric.previousValue !== undefined && (
+                        <div 
+                            className="absolute top-0 left-0 h-2.5 rounded-full bg-gray-300 opacity-50"
+                            style={{ width: `${metric.previousValue}%` }}
+                        ></div>
+                    )}
+                    {/* Current Value Bar */}
                     <div 
-                        className={`h-2.5 rounded-full transition-all duration-1000 ease-out ${getBgColor(metric.value)}`} 
+                        className={`absolute top-0 left-0 h-2.5 rounded-full transition-all duration-1000 ease-out ${getBgColor(metric.value)}`} 
                         style={{ width: `${metric.value}%` }}
                     ></div>
                 </div>

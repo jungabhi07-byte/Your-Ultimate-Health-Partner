@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { UserProfile } from '../types';
 import { BLOOD_GROUPS, ACTIVITY_LEVELS, DIETARY_PREFERENCES } from '../constants';
@@ -15,6 +16,13 @@ interface HealthFormProps {
   initialData: UserProfile;
   onSubmit: (data: UserProfile) => void;
   onCancel: () => void;
+}
+
+// Parsing Result Interface
+interface ParseResult {
+  valid: boolean;
+  value: string;
+  error?: string;
 }
 
 const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel }) => {
@@ -56,14 +64,62 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
     }
   }, []);
 
-  // Voice Input Logic
+  // --- Parsing Strategies ---
+
+  const parseNumeric = (text: string, min: number, max: number, fieldName: string): ParseResult => {
+    // Extract all numbers from the text (handles decimals)
+    const matches = text.match(/(\d+(\.\d+)?)/g);
+    if (!matches) {
+      return { valid: false, value: '', error: `Could not hear a number for ${fieldName}. Please try again.` };
+    }
+    
+    // Find the first number that falls within a reasonable range
+    const validNum = matches.find(numStr => {
+      const val = parseFloat(numStr);
+      return val >= min && val <= max;
+    });
+
+    if (validNum) {
+      return { valid: true, value: validNum };
+    }
+    return { valid: false, value: '', error: `${fieldName} detected (${matches[0]}) seems invalid. Range: ${min}-${max}.` };
+  };
+
+  const parseOption = (text: string, options: { value: string, keywords: string[] }[]): ParseResult => {
+    const lower = text.toLowerCase();
+    
+    // Sort options by specificity (optional, but good if keywords overlap)
+    for (const opt of options) {
+      // Check if any keyword for this option exists in the spoken text
+      if (opt.keywords.some(k => lower.includes(k))) {
+        return { valid: true, value: opt.value };
+      }
+    }
+    return { valid: false, value: '', error: "Could not match your input to an option. Try using the dropdown list terms." };
+  };
+
+  const parseFreeText = (text: string): ParseResult => {
+    if (!text || text.trim().length === 0) return { valid: false, value: '', error: "No input detected." };
+    
+    // Check for clear commands
+    const lower = text.toLowerCase();
+    if (lower === 'clear' || lower === 'none' || lower === 'nothing' || lower === 'delete') {
+      return { valid: true, value: '' }; // Clear the field
+    }
+
+    // Capitalize first letter
+    const formatted = text.charAt(0).toUpperCase() + text.slice(1);
+    return { valid: true, value: formatted };
+  };
+
+  // --- Voice Input Logic ---
+
   const startListening = useCallback((field: keyof UserProfile) => {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       setSpeechError("Voice input is not supported in this browser.");
       return;
     }
 
-    // Abort any existing session
     if (recognitionRef.current) {
       recognitionRef.current.abort();
     }
@@ -82,7 +138,6 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
     };
 
     recognition.onend = () => {
-      // Small delay to prevent flickering if restarting immediately
       setListeningField(null);
       recognitionRef.current = null;
     };
@@ -92,7 +147,6 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
       let errorMessage = "Could not hear you. Please try again.";
       
       if (event.error === 'aborted') {
-        // User stopped it manually or clicked another field, ignore
         setListeningField(null);
         return; 
       } else if (event.error === 'no-speech') {
@@ -117,88 +171,86 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
     } catch (e) {
         console.error("Failed to start recognition", e);
     }
-  }, [data]); // Depend on data if needed, or remove if processVoiceInput is stable
+  }, [data]);
 
   const processVoiceInput = (field: keyof UserProfile, text: string) => {
     console.log(`Voice Input for ${field}: ${text}`);
-    let value = text;
-    let foundMatch = false;
+    let result: ParseResult = { valid: false, value: '', error: 'Unknown error' };
 
-    // Parsing logic based on field type
-    if (field === 'age' || field === 'weight' || field === 'height') {
-      // Extract first number found
-      const numberMatch = text.match(/\d+(\.\d+)?/);
-      if (numberMatch) {
-        value = numberMatch[0];
-        foundMatch = true;
-      }
-    } else if (field === 'gender') {
-      const lowerText = text.toLowerCase();
-      // Map natural language to valid Gender options
-      if (/\b(female|woman|girl|she|her)\b/.test(lowerText)) {
-        value = 'Female';
-        foundMatch = true;
-      } else if (/\b(male|man|boy|he|him)\b/.test(lowerText)) {
-        value = 'Male';
-        foundMatch = true;
-      } else if (lowerText.includes('other')) {
-        value = 'Other';
-        foundMatch = true;
-      }
-    } else if (field === 'bloodGroup') {
-      // Normalize spoken blood groups
-      let clean = text.toLowerCase();
-      clean = clean.replace(/positive|plus|pos/, '+');
-      clean = clean.replace(/negative|minus|neg/, '-');
-      // Remove "type" and spaces, e.g., "type a positive" -> "a+"
-      clean = clean.replace('type', '').replace(/\s/g, '').toUpperCase();
+    switch (field) {
+      case 'age':
+        result = parseNumeric(text, 1, 120, 'Age');
+        break;
+      case 'weight':
+        result = parseNumeric(text, 2, 500, 'Weight');
+        break;
+      case 'height':
+        result = parseNumeric(text, 30, 300, 'Height');
+        break;
       
-      // Sort groups by length descending so "AB+" matches before "A+" or "B+"
-      const sortedGroups = [...BLOOD_GROUPS].sort((a, b) => b.length - a.length);
-      const match = sortedGroups.find(bg => clean.includes(bg));
+      case 'gender':
+        result = parseOption(text, [
+          { value: 'Female', keywords: ['female', 'woman', 'girl', 'she', 'her'] },
+          { value: 'Male', keywords: ['male', 'man', 'boy', 'he', 'him'] },
+          { value: 'Other', keywords: ['other', 'non-binary', 'diverse'] }
+        ]);
+        break;
       
-      if (match) {
-        value = match;
-        foundMatch = true;
-      }
-    } else if (field === 'activityLevel') {
-      const lower = text.toLowerCase();
-      // Heuristic matching for activity levels
-      if (/\b(sedentary|lazy|little|none|couch)\b/.test(lower)) {
-        value = 'sedentary';
-        foundMatch = true;
-      } else if (/\b(light|lightly|walk|mild)\b/.test(lower)) {
-        value = 'light';
-        foundMatch = true;
-      } else if (/\b(moderate|medium|average)\b/.test(lower)) {
-        value = 'moderate';
-        foundMatch = true;
-      } else if (/\b(super|athlete|pro|intense)\b/.test(lower)) {
-        value = 'athlete';
-        foundMatch = true;
-      } else if (/\b(active|hard|heavy|gym)\b/.test(lower)) {
-        value = 'active'; 
-        foundMatch = true;
-      }
-    } else if (field === 'dietaryPreference') {
-      const lower = text.toLowerCase();
-      const match = DIETARY_PREFERENCES.find(pref => lower.includes(pref.toLowerCase()));
-      if (match) {
-        value = match;
-        foundMatch = true;
-      } else if (lower.includes('no') || lower.includes('none') || lower.includes('all')) {
-        value = 'No Restrictions';
-        foundMatch = true;
-      }
-    } else {
-        // For open text fields like medicalHistory, we accept whatever is spoken
-        foundMatch = true;
+      case 'bloodGroup':
+         // Clean up spoken blood group
+         let cleanBg = text.toLowerCase()
+            .replace(/positive|plus|pos/, '+')
+            .replace(/negative|minus|neg/, '-')
+            .replace(/type/, '')
+            .replace(/\s/g, '')
+            .toUpperCase();
+            
+         // Match against known groups (checking longest first to catch AB before A/B)
+         const sortedGroups = [...BLOOD_GROUPS].sort((a, b) => b.length - a.length);
+         const foundBg = sortedGroups.find(bg => cleanBg.includes(bg));
+         
+         if (foundBg) {
+           result = { valid: true, value: foundBg };
+         } else {
+           result = { valid: false, value: '', error: `Could not identify blood group from "${text}". Try saying "O Positive".` };
+         }
+        break;
+
+      case 'activityLevel':
+        result = parseOption(text, [
+          { value: 'sedentary', keywords: ['sedentary', 'lazy', 'none', 'sitting', 'couch', 'little'] },
+          { value: 'light', keywords: ['light', 'mild', 'walk', 'easy', 'occasional'] },
+          { value: 'moderate', keywords: ['moderate', 'medium', 'average', 'normal', 'regular'] },
+          { value: 'athlete', keywords: ['super', 'athlete', 'pro', 'intense', 'very active', 'training'] },
+          { value: 'active', keywords: ['active', 'hard', 'heavy', 'gym', 'sport'] } // Fallback for active
+        ]);
+        break;
+
+      case 'dietaryPreference':
+        result = parseOption(text, [
+          { value: 'Vegetarian (No meat)', keywords: ['vegetarian', 'no meat', 'veggie'] },
+          { value: 'Vegan (Plants only)', keywords: ['vegan', 'plant', 'plants'] },
+          { value: 'Pescatarian (Fish allowed)', keywords: ['pescatarian', 'fish', 'seafood'] },
+          { value: 'Low Carb / Keto', keywords: ['keto', 'low carb', 'carbs', 'ketogenic'] },
+          { value: 'Gluten-Free', keywords: ['gluten', 'celiac', 'wheat'] },
+          { value: 'Dairy-Free', keywords: ['dairy', 'lactose', 'milk'] },
+          { value: 'I eat everything', keywords: ['everything', 'all', 'anything', 'omnivore', 'normal', 'none'] }
+        ]);
+        break;
+      
+      case 'medicalHistory':
+        result = parseFreeText(text);
+        break;
+
+      default:
+        result = { valid: true, value: text };
     }
 
-    if (foundMatch) {
-        handleChange(field, value);
+    if (result.valid) {
+        handleChange(field, result.value);
+        // Optional: Provide visual feedback of success?
     } else {
-        setSpeechError(`Could not recognize a valid ${field}. Please try saying it again.`);
+        setSpeechError(result.error || "Could not understand input.");
     }
   };
 

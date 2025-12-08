@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, ShieldCheck, HeartPulse, ArrowRight } from 'lucide-react';
+import { Activity, ShieldCheck, HeartPulse, ArrowRight, Stethoscope, BookOpen, GraduationCap } from 'lucide-react';
 
 interface HeroProps {
   onStart: () => void;
@@ -17,10 +17,14 @@ const Hero: React.FC<HeroProps> = ({ onStart, onOpenBloodBlog }) => {
 
   return (
     <div className="relative isolate overflow-hidden">
-      <div className="mx-auto max-w-7xl px-6 pb-24 pt-10 sm:pb-32 lg:flex lg:px-8 lg:py-40">
+      <div className="mx-auto max-w-7xl px-6 pb-24 pt-6 sm:pb-32 lg:flex lg:px-8 lg:py-20">
         <div className="mx-auto max-w-2xl lg:mx-0 lg:max-w-xl lg:flex-shrink-0 lg:pt-8">
           
-          <div className="mt-24 sm:mt-32 lg:mt-16 mb-8 flex justify-start">
+          <h1 className="mt-2 text-4xl font-bold tracking-tight text-gray-900 sm:text-6xl">
+            Unlock Your Body's <span className="text-teal-600">True Potential</span>
+          </h1>
+          
+          <div className="mt-6 mb-8 flex justify-start">
             <div 
                 onClick={onOpenBloodBlog}
                 className="cursor-pointer flex items-center gap-2 rounded-full bg-white p-1 pr-4 text-sm leading-6 text-gray-600 ring-1 ring-gray-900/10 hover:ring-gray-900/20 transition-all hover:shadow-sm"
@@ -30,10 +34,7 @@ const Hero: React.FC<HeroProps> = ({ onStart, onOpenBloodBlog }) => {
             </div>
           </div>
 
-          <h1 className="mt-2 text-4xl font-bold tracking-tight text-gray-900 sm:text-6xl">
-            Unlock Your Body's <span className="text-teal-600">True Potential</span>
-          </h1>
-          <p className="mt-6 text-lg leading-8 text-gray-600">
+          <p className="mt-2 text-lg leading-8 text-gray-600">
             Your Ultimate Health Partner analyzes your unique biological profile—including blood group, biometrics, and lifestyle—to generate a personalized health roadmap and daily routine designed just for you.
           </p>
           
@@ -42,7 +43,7 @@ const Hero: React.FC<HeroProps> = ({ onStart, onOpenBloodBlog }) => {
               onClick={onStart}
               className="group rounded-full bg-gradient-to-r from-teal-600 to-emerald-500 px-8 py-4 text-base font-bold text-white shadow-lg shadow-teal-200 hover:shadow-xl hover:-translate-y-1 transition-all flex items-center gap-3"
             >
-              <span className="text-2xl">🧬</span>
+              <Stethoscope className="h-6 w-6 animate-[pulse_2s_ease-in-out_infinite]" />
               <span>Start Assessment</span>
               <ArrowRight className="h-5 w-5 group-hover:translate-x-1 transition-transform" />
             </button>
@@ -52,7 +53,10 @@ const Hero: React.FC<HeroProps> = ({ onStart, onOpenBloodBlog }) => {
               onClick={scrollToBlogs} 
               className="group rounded-full bg-white px-8 py-4 text-base font-bold text-indigo-600 shadow-md ring-1 ring-indigo-50 hover:bg-indigo-50 hover:ring-indigo-200 hover:-translate-y-1 transition-all flex items-center gap-3"
             >
-              <span className="text-2xl">🧠</span>
+              <div className="relative">
+                <BookOpen className="h-6 w-6" />
+                <GraduationCap className="h-3 w-3 absolute -top-1 -right-1 text-indigo-400" />
+              </div>
               <span>Read Health Blogs</span>
               <span aria-hidden="true" className="group-hover:translate-x-1 transition-transform">→</span>
             </a>

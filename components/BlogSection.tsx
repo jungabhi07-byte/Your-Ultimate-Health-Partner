@@ -1,5 +1,5 @@
 import React from 'react';
-import { Coffee, Moon, Activity, Droplet, Sun, Smile } from 'lucide-react';
+import { Coffee, Moon, Activity, Droplet, Sun, Smile, Lightbulb } from 'lucide-react';
 
 const blogs = [
   {
@@ -42,10 +42,12 @@ const blogs = [
 
 const BlogSection: React.FC = () => {
   return (
-    <div id="learn-more" className="py-24 sm:py-32 bg-white border-t border-gray-100">
+    <div id="learn-more" className="py-12 bg-white border-t border-gray-100">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
         <div className="mx-auto max-w-2xl text-center">
-          <h2 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl">Wellness Wisdom 💡</h2>
+          <h2 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl flex items-center justify-center gap-3">
+            Wellness Wisdom <Lightbulb className="h-8 w-8 text-yellow-500 fill-yellow-100" />
+          </h2>
           <p className="mt-2 text-lg leading-8 text-gray-600">
             Simple, science-backed tips to improve your daily life and long-term health.
           </p>
