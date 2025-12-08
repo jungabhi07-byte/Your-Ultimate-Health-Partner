@@ -277,7 +277,8 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
   const isStep2Valid = data.bloodGroup && data.activityLevel;
   
   return (
-    <div className="max-w-2xl mx-auto px-4 py-12 sm:px-6 lg:px-8">
+    // Reduced padding from py-12 to py-6
+    <div className="max-w-2xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
       <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100 relative">
         
         {/* Progress Bar */}

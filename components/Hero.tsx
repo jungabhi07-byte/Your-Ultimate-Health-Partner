@@ -17,14 +17,16 @@ const Hero: React.FC<HeroProps> = ({ onStart, onOpenBloodBlog }) => {
 
   return (
     <div className="relative isolate overflow-hidden">
-      <div className="mx-auto max-w-7xl px-6 pb-24 pt-6 sm:pb-32 lg:flex lg:px-8 lg:py-20">
-        <div className="mx-auto max-w-2xl lg:mx-0 lg:max-w-xl lg:flex-shrink-0 lg:pt-8">
+      {/* Reduced padding from pb-24/pt-6 to pb-8/pt-4 and lg:py-20 to lg:py-10 */}
+      <div className="mx-auto max-w-7xl px-6 pb-8 pt-4 sm:pb-12 lg:flex lg:px-8 lg:py-10">
+        <div className="mx-auto max-w-2xl lg:mx-0 lg:max-w-xl lg:flex-shrink-0 lg:pt-4">
           
           <h1 className="mt-2 text-4xl font-bold tracking-tight text-gray-900 sm:text-6xl">
             Unlock Your Body's <span className="text-teal-600">True Potential</span>
           </h1>
           
-          <div className="mt-6 mb-8 flex justify-start">
+          {/* Reduced margins from mt-6 mb-8 to mt-4 mb-6 */}
+          <div className="mt-4 mb-6 flex justify-start">
             <div 
                 onClick={onOpenBloodBlog}
                 className="cursor-pointer flex items-center gap-2 rounded-full bg-white p-1 pr-4 text-sm leading-6 text-gray-600 ring-1 ring-gray-900/10 hover:ring-gray-900/20 transition-all hover:shadow-sm"
@@ -38,7 +40,7 @@ const Hero: React.FC<HeroProps> = ({ onStart, onOpenBloodBlog }) => {
             Your Ultimate Health Partner analyzes your unique biological profile—including blood group, biometrics, and lifestyle—to generate a personalized health roadmap and daily routine designed just for you.
           </p>
           
-          <div className="mt-10 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+          <div className="mt-8 flex flex-col sm:flex-row items-start sm:items-center gap-4">
             <button
               onClick={onStart}
               className="group rounded-full bg-gradient-to-r from-teal-600 to-emerald-500 px-8 py-4 text-base font-bold text-white shadow-lg shadow-teal-200 hover:shadow-xl hover:-translate-y-1 transition-all flex items-center gap-3"
@@ -63,8 +65,8 @@ const Hero: React.FC<HeroProps> = ({ onStart, onOpenBloodBlog }) => {
           </div>
         </div>
         
-        {/* Visual Decoration */}
-        <div className="mx-auto mt-16 flex max-w-2xl sm:mt-24 lg:ml-10 lg:mt-0 lg:mr-0 lg:max-w-none lg:flex-none xl:ml-32">
+        {/* Visual Decoration - Reduced mt-16 to mt-8 and reduced left margins */}
+        <div className="mx-auto mt-8 flex max-w-2xl sm:mt-12 lg:ml-6 lg:mt-0 lg:mr-0 lg:max-w-none lg:flex-none xl:ml-16">
           <div className="max-w-3xl flex-none sm:max-w-5xl lg:max-w-none">
             <div className="-m-2 rounded-xl bg-gray-900/5 p-2 ring-1 ring-inset ring-gray-900/10 lg:-m-4 lg:rounded-2xl lg:p-4">
               <div className="rounded-md bg-white p-8 shadow-2xl ring-1 ring-gray-900/10 sm:p-10">

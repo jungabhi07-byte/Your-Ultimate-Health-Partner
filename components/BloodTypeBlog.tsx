@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { ArrowLeft, Droplet, Shield, Dna, CreditCard, Check, Download } from 'lucide-react';
 import PaymentModal from './PaymentModal';
@@ -16,8 +17,8 @@ const BloodTypeBlog: React.FC<BloodTypeBlogProps> = ({ onBack }) => {
 
   return (
     <div className="bg-white min-h-screen animate-fadeIn">
-      {/* Header */}
-      <div className="bg-slate-900 text-white py-12 px-6">
+      {/* Header - Reduced padding from py-12 to py-8 */}
+      <div className="bg-slate-900 text-white py-8 px-6">
         <div className="max-w-4xl mx-auto">
           <button 
             onClick={onBack}
@@ -30,7 +31,8 @@ const BloodTypeBlog: React.FC<BloodTypeBlogProps> = ({ onBack }) => {
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto px-6 py-12 space-y-12">
+      {/* Content - Reduced padding from py-12 to py-8 */}
+      <div className="max-w-4xl mx-auto px-6 py-8 space-y-12">
         
         {/* Intro */}
         <div className="prose prose-lg text-gray-600">
@@ -70,9 +72,9 @@ const BloodTypeBlog: React.FC<BloodTypeBlogProps> = ({ onBack }) => {
             
             <div className="space-y-6">
                 {/* Type O */}
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 transition-all hover:shadow-md">
+                <div className="bg-gradient-to-br from-white to-teal-50 p-6 rounded-xl shadow-sm border border-teal-100 transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
                     <div className="flex gap-4 items-start">
-                         <span className="bg-teal-100 text-teal-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1">Type O</span>
+                         <span className="bg-teal-100 text-teal-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1 shadow-sm">Type O</span>
                          <div>
                              <h4 className="font-semibold text-gray-900 text-lg">The Hunter (Original)</h4>
                              <div className="mt-3 space-y-2 text-gray-600 text-sm">
@@ -85,9 +87,9 @@ const BloodTypeBlog: React.FC<BloodTypeBlogProps> = ({ onBack }) => {
                 </div>
 
                 {/* Type A */}
-                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 transition-all hover:shadow-md">
+                 <div className="bg-gradient-to-br from-white to-indigo-50 p-6 rounded-xl shadow-sm border border-indigo-100 transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
                     <div className="flex gap-4 items-start">
-                         <span className="bg-indigo-100 text-indigo-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1">Type A</span>
+                         <span className="bg-indigo-100 text-indigo-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1 shadow-sm">Type A</span>
                          <div>
                              <h4 className="font-semibold text-gray-900 text-lg">The Agrarian (Cultivator)</h4>
                              <div className="mt-3 space-y-2 text-gray-600 text-sm">
@@ -100,9 +102,9 @@ const BloodTypeBlog: React.FC<BloodTypeBlogProps> = ({ onBack }) => {
                 </div>
 
                 {/* Type B */}
-                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 transition-all hover:shadow-md">
+                 <div className="bg-gradient-to-br from-white to-amber-50 p-6 rounded-xl shadow-sm border border-amber-100 transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
                     <div className="flex gap-4 items-start">
-                         <span className="bg-amber-100 text-amber-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1">Type B</span>
+                         <span className="bg-amber-100 text-amber-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1 shadow-sm">Type B</span>
                          <div>
                              <h4 className="font-semibold text-gray-900 text-lg">The Nomad (Balanced)</h4>
                              <div className="mt-3 space-y-2 text-gray-600 text-sm">
@@ -115,9 +117,9 @@ const BloodTypeBlog: React.FC<BloodTypeBlogProps> = ({ onBack }) => {
                 </div>
 
                 {/* Type AB */}
-                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 transition-all hover:shadow-md">
+                 <div className="bg-gradient-to-br from-white to-purple-50 p-6 rounded-xl shadow-sm border border-purple-100 transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
                     <div className="flex gap-4 items-start">
-                         <span className="bg-purple-100 text-purple-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1">Type AB</span>
+                         <span className="bg-purple-100 text-purple-800 font-bold px-3 py-1 rounded text-sm min-w-[3rem] text-center mt-1 shadow-sm">Type AB</span>
                          <div>
                              <h4 className="font-semibold text-gray-900 text-lg">The Enigma (Modern)</h4>
                              <div className="mt-3 space-y-2 text-gray-600 text-sm">
