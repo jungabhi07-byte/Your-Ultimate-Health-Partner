@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { AppState, UserProfile, HealthReport } from './types';
 import { INITIAL_USER_PROFILE } from './constants';
 import { generateHealthReport, generateReportVisual } from './services/geminiService';
-import { getHistory, saveReportToHistory, getLatestReport } from './services/storageService';
 import Hero from './components/Hero';
 import BlogSection from './components/BlogSection';
 import HealthForm from './components/HealthForm';
@@ -15,15 +14,8 @@ const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.LANDING);
   const [userProfile, setUserProfile] = useState<UserProfile>(INITIAL_USER_PROFILE);
   const [report, setReport] = useState<HealthReport | null>(null);
-  const [previousReport, setPreviousReport] = useState<HealthReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
-
-  // Load history on mount
-  useEffect(() => {
-    const latest = getLatestReport();
-    setPreviousReport(latest);
-  }, []);
 
   // Scroll Listener for Floating Button
   useEffect(() => {
@@ -58,16 +50,10 @@ const App: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
     try {
-      // Pass history to AI service
-      const history = getHistory();
-      const generatedReport = await generateHealthReport(data, history);
+      // Generate fresh report without history context
+      const generatedReport = await generateHealthReport(data);
       
       setReport(generatedReport);
-      
-      // Save to local history
-      saveReportToHistory(generatedReport);
-      // Update previous report state for next time
-      setPreviousReport(generatedReport);
       
       // Move to report screen immediately with the text data
       setAppState(AppState.REPORT);
@@ -142,7 +128,6 @@ const App: React.FC = () => {
           <ReportDashboard 
             report={report} 
             onReset={handleReset} 
-            previousReport={previousReport} // Pass the "previous" one (logic handled in App to ensure it's not the same as current if freshly generated, but simple use case is fine)
           />
         )}
 

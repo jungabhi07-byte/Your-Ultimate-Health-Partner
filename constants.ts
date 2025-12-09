@@ -4,11 +4,11 @@ export const BLOOD_GROUPS = [
 ];
 
 export const ACTIVITY_LEVELS = [
-  { value: 'sedentary', label: 'Sedentary (Little to no exercise)' },
-  { value: 'light', label: 'Lightly Active (Light exercise 1-3 days/week)' },
-  { value: 'moderate', label: 'Moderately Active (Moderate exercise 3-5 days/week)' },
-  { value: 'active', label: 'Very Active (Hard exercise 6-7 days/week)' },
-  { value: 'athlete', label: 'Super Active (Physical job or training)' }
+  { value: 'sedentary', label: 'I mostly sit (Desk job)' },
+  { value: 'light', label: 'I walk a little (Occasional movement)' },
+  { value: 'moderate', label: 'I exercise sometimes (2-3 times a week)' },
+  { value: 'active', label: 'I exercise often (4-5 times a week)' },
+  { value: 'athlete', label: 'I train hard (Daily or physical job)' }
 ];
 
 export const DIETARY_PREFERENCES = [

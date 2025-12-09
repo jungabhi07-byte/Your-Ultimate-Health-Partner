@@ -15,33 +15,42 @@ import {
   Loader2,
   Image as ImageIcon,
   ArrowLeft,
-  TrendingUp,
-  Volume2
+  Volume2,
+  Download,
+  RefreshCw
 } from 'lucide-react';
-import { generateAudioSummary } from '../services/geminiService';
+import { generateAudioSummary, generateReportVisual } from '../services/geminiService';
 import HealthChart from './HealthChart';
+import { jsPDF } from 'jspdf';
 
 interface ReportDashboardProps {
   report: HealthReport;
-  previousReport?: HealthReport | null;
   onReset: () => void;
+  // removed previousReport prop
 }
 
-const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousReport, onReset }) => {
+const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
-  // Store the raw base64 string to avoid repeated fetches
   const [preloadedAudioBase64, setPreloadedAudioBase64] = useState<string | null>(null);
   
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  
+  const [isRegeneratingVisual, setIsRegeneratingVisual] = useState(false);
+  const [visualData, setVisualData] = useState<string | undefined>(report.visualBase64);
 
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const startTimeRef = useRef<number>(0);
   const pausedTimeRef = useRef<number>(0);
   const rafRef = useRef<number>(0);
+
+  // Sync visualData with report prop if it changes
+  useEffect(() => {
+    setVisualData(report.visualBase64);
+  }, [report.visualBase64]);
 
   // Pre-fetch audio when report loads
   useEffect(() => {
@@ -49,7 +58,6 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
     const fetchAudio = async () => {
         if (!report.summary) return;
         try {
-            // Background fetch - do not set global loading state to avoid blocking UI
             const base64Audio = await generateAudioSummary(report.summary);
             if (isMounted) {
                 setPreloadedAudioBase64(base64Audio);
@@ -59,7 +67,6 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
         }
     };
     
-    // Only fetch if we haven't already
     if (!preloadedAudioBase64) {
         fetchAudio();
     }
@@ -72,7 +79,6 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
     const animate = () => {
         if (audioContext && isPlaying) {
             const elapsed = audioContext.currentTime - startTimeRef.current;
-            // Clamp to duration
             const current = Math.min(elapsed, duration);
             setCurrentTime(current);
             rafRef.current = requestAnimationFrame(animate);
@@ -88,7 +94,6 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
     return () => cancelAnimationFrame(rafRef.current);
   }, [isPlaying, audioContext, duration]);
 
-  // Calculate Chart Data based on report metrics
   const calculateMetrics = (r: HealthReport) => {
       const bmiScore = r.bmiCategory === 'Normal' ? 95 : 
                        r.bmiCategory === 'Overweight' ? 75 : 
@@ -102,43 +107,31 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
   };
 
   const currentMetrics = calculateMetrics(report);
-  
-  // Calculate previous metrics if they represent a DIFFERENT assessment (check date)
-  let previousMetrics = null;
-  // Simple check: if we have a previous report and it's not the exact same date stamp (or object ref)
-  if (previousReport && previousReport.date !== report.date) {
-      previousMetrics = calculateMetrics(previousReport);
-  }
 
   const chartData = [
     { 
         subject: 'Overall Wellness', 
         value: report.overallHealthScore, 
-        previousValue: previousMetrics ? previousReport?.overallHealthScore : undefined,
         fullMark: 100 
     },
     { 
         subject: 'BMI Health', 
         value: currentMetrics.bmiScore, 
-        previousValue: previousMetrics?.bmiScore,
         fullMark: 100 
     },
     { 
         subject: 'Risk Control', 
         value: currentMetrics.riskScore, 
-        previousValue: previousMetrics?.riskScore,
         fullMark: 100 
     },
     { 
         subject: 'Vitality', 
         value: currentMetrics.strengthScore, 
-        previousValue: previousMetrics?.strengthScore,
         fullMark: 100 
     },
     { 
         subject: 'Lifestyle', 
         value: currentMetrics.routineScore, 
-        previousValue: previousMetrics?.routineScore,
         fullMark: 100 
     },
   ];
@@ -167,7 +160,6 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (sourceNodeRef.current) {
@@ -188,10 +180,8 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
       bytes[i] = binaryString.charCodeAt(i);
     }
     
-    // Safety check for odd-length buffers which can crash Int16Array
     const effectiveLen = len % 2 !== 0 ? len - 1 : len;
     
-    // Convert to 16-bit PCM
     const int16Data = new Int16Array(bytes.buffer, 0, effectiveLen / 2);
     const sampleRate = 24000; 
     const numChannels = 1;
@@ -209,14 +199,10 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
   const handlePlayAudio = async () => {
     if (isPlaying) {
       if (sourceNodeRef.current && audioContext) {
-        try {
-            sourceNodeRef.current.stop();
-        } catch (e) {
-            // ignore
-        }
+        try { sourceNodeRef.current.stop(); } catch (e) {}
         const elapsed = audioContext.currentTime - startTimeRef.current;
         pausedTimeRef.current = elapsed;
-        setCurrentTime(elapsed); // Sync visual state
+        setCurrentTime(elapsed); 
         setIsPlaying(false);
       }
       return;
@@ -233,7 +219,6 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
     }
 
     if (!audioBuffer) {
-      // Logic: Use preloaded data if available, otherwise fetch
       const dataToDecode = preloadedAudioBase64;
       
       if (!dataToDecode) {
@@ -246,12 +231,10 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
             playBuffer(ctx, decodedBuffer, 0);
           } catch (err) {
             console.error("Audio playback failed", err);
-            // Silent fail to UI, or show toast
           } finally {
             setIsLoadingAudio(false);
           }
       } else {
-          // Fast path: Data already downloaded
           try {
             const decodedBuffer = decodePCM(dataToDecode, ctx);
             setAudioBuffer(decodedBuffer);
@@ -262,8 +245,6 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
           }
       }
     } else {
-      // If completed, restart. If paused, resume.
-      // If we reached the end visually (approx), reset to 0
       const startOffset = currentTime >= duration ? 0 : pausedTimeRef.current;
       playBuffer(ctx, audioBuffer, startOffset);
     }
@@ -278,9 +259,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
     source.buffer = buffer;
     source.connect(ctx.destination);
     
-    source.onended = () => {
-       // Only handle naturally ending, not forced stops via button
-    };
+    source.onended = () => {};
 
     source.start(0, startOffset);
     startTimeRef.current = ctx.currentTime - startOffset;
@@ -289,7 +268,6 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
     
     const durationRemaining = buffer.duration - startOffset;
     
-    // Auto reset when done
     setTimeout(() => {
         if (sourceNodeRef.current === source) {
              setIsPlaying(false);
@@ -299,11 +277,108 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
     }, durationRemaining * 1000 + 200); 
   };
 
+  const handleRegenerateVisual = async () => {
+    if (isRegeneratingVisual) return;
+    setIsRegeneratingVisual(true);
+    try {
+        const newVisual = await generateReportVisual(report.summary);
+        if (newVisual) {
+            setVisualData(newVisual);
+        }
+    } catch (e) {
+        console.error("Failed to regenerate visual", e);
+    } finally {
+        setIsRegeneratingVisual(false);
+    }
+  };
+
+  const handleDownloadPDF = () => {
+    const doc = new jsPDF();
+    const margin = 20;
+    let y = 20;
+
+    // Header
+    doc.setFontSize(22);
+    doc.setTextColor(13, 148, 136); // Teal
+    doc.text("Your Ultimate Health Partner", margin, y);
+    y += 10;
+    
+    doc.setFontSize(16);
+    doc.setTextColor(0, 0, 0);
+    doc.text("Personalized Health Report", margin, y);
+    y += 10;
+
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Date: ${new Date().toLocaleDateString()}`, margin, y);
+    y += 15;
+
+    // Summary
+    doc.setFontSize(14);
+    doc.setTextColor(0);
+    doc.text("Summary", margin, y);
+    y += 7;
+    doc.setFontSize(11);
+    const summaryLines = doc.splitTextToSize(report.summary, 170);
+    doc.text(summaryLines, margin, y);
+    y += (summaryLines.length * 5) + 10;
+
+    // Strengths
+    doc.setFontSize(14);
+    doc.text("Key Strengths", margin, y);
+    y += 7;
+    doc.setFontSize(11);
+    report.keyStrengths.forEach(str => {
+        const lines = doc.splitTextToSize(`• ${str}`, 170);
+        doc.text(lines, margin, y);
+        y += (lines.length * 5) + 2;
+    });
+    y += 8;
+
+    // Risks
+    doc.setFontSize(14);
+    doc.text("Risk Factors", margin, y);
+    y += 7;
+    doc.setFontSize(11);
+    report.potentialRisks.forEach(risk => {
+        const lines = doc.splitTextToSize(`• ${risk}`, 170);
+        doc.text(lines, margin, y);
+        y += (lines.length * 5) + 2;
+    });
+    y += 8;
+
+    // Routine
+    if (y > 250) {
+        doc.addPage();
+        y = 20;
+    }
+    
+    doc.setFontSize(14);
+    doc.text("Daily Routine", margin, y);
+    y += 7;
+    doc.setFontSize(11);
+    report.dailyRoutine.forEach(item => {
+        if (y > 270) {
+            doc.addPage();
+            y = 20;
+        }
+        doc.setFont("helvetica", "bold");
+        doc.text(`${item.timeOfDay}: ${item.title}`, margin, y);
+        y += 5;
+        doc.setFont("helvetica", "normal");
+        const descLines = doc.splitTextToSize(item.description, 170);
+        doc.text(descLines, margin, y);
+        y += (descLines.length * 5) + 5;
+    });
+
+    doc.save('MyHealthReport.pdf');
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8 animate-fadeIn">
       
-      {/* Back to Home Header */}
-      <div>
+      {/* Back to Home & Download Header */}
+      <div className="flex justify-between items-center animate-slideUp">
         <button 
           onClick={onReset}
           className="flex items-center text-gray-500 hover:text-teal-600 transition-colors"
@@ -311,27 +386,52 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
           <ArrowLeft className="h-4 w-4 mr-1" />
           <span>Back to Home</span>
         </button>
+        
+        <button
+            onClick={handleDownloadPDF}
+            className="flex items-center text-teal-600 hover:text-teal-800 transition-colors gap-2 bg-teal-50 px-4 py-2 rounded-lg hover:bg-teal-100"
+        >
+            <Download className="h-4 w-4" />
+            <span className="font-medium text-sm">Download Report</span>
+        </button>
       </div>
 
       {/* Header Visual & Summary */}
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-        {report.visualBase64 ? (
-            <div className="h-64 w-full overflow-hidden relative group">
+      <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden animate-slideUp delay-100">
+        {visualData ? (
+            <div className="h-64 w-full overflow-hidden relative group animate-fadeIn">
                 <img 
-                    src={`data:image/png;base64,${report.visualBase64}`} 
+                    src={`data:image/png;base64,${visualData}`} 
                     alt="Health Visualization" 
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-8">
-                    <div className="text-white">
-                        <h1 className="text-3xl font-bold">Your Health Report</h1>
-                        <p className="opacity-90">AI-generated visualization of your wellness status</p>
+                    <div className="text-white w-full flex justify-between items-end">
+                        <div>
+                            <h1 className="text-3xl font-bold">Your Health Report</h1>
+                            <p className="opacity-90">AI-generated visualization of your wellness status</p>
+                        </div>
+                        <button 
+                            onClick={handleRegenerateVisual}
+                            disabled={isRegeneratingVisual}
+                            className="p-2 bg-white/20 backdrop-blur-md rounded-full hover:bg-white/30 transition-all text-white disabled:opacity-50"
+                            title="Regenerate Visual"
+                        >
+                            <RefreshCw className={`h-5 w-5 ${isRegeneratingVisual ? 'animate-spin' : ''}`} />
+                        </button>
                     </div>
                 </div>
             </div>
         ) : (
-            <div className="h-32 bg-gradient-to-r from-teal-600 to-teal-800 p-8 flex items-end">
+            <div className="h-32 bg-gradient-to-r from-teal-600 to-teal-800 p-8 flex items-end justify-between animate-pulse">
                 <h1 className="text-3xl font-bold text-white">Your Health Report</h1>
+                 <button 
+                    onClick={handleRegenerateVisual}
+                    disabled={isRegeneratingVisual}
+                    className="p-2 bg-white/20 backdrop-blur-md rounded-full hover:bg-white/30 transition-all text-white disabled:opacity-50"
+                >
+                    <RefreshCw className={`h-5 w-5 ${isRegeneratingVisual ? 'animate-spin' : ''}`} />
+                </button>
             </div>
         )}
 
@@ -376,7 +476,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
                         </div>
                     </div>
                </div>
-               {!report.visualBase64 && !preloadedAudioBase64 && !isLoadingAudio && (
+               {!visualData && !preloadedAudioBase64 && !isLoadingAudio && (
                    <div className="text-[10px] text-gray-400 pl-1">
                       Audio generating in background...
                    </div>
@@ -393,19 +493,9 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
             </div>
             <p className="text-gray-600 leading-relaxed text-lg">{report.summary}</p>
             
-            {/* Trend Analysis Section - Shows "Learning Adaptability" */}
-            {report.trendAnalysis && (
-                <div className="mt-4 p-4 bg-indigo-50 rounded-lg border border-indigo-100 flex items-start gap-3">
-                    <TrendingUp className="h-5 w-5 text-indigo-600 flex-shrink-0 mt-0.5" />
-                    <div>
-                        <h4 className="font-semibold text-indigo-900 text-sm">Progress & Adaptability</h4>
-                        <p className="text-indigo-800 text-sm">{report.trendAnalysis}</p>
-                    </div>
-                </div>
-            )}
           </div>
           
-          <div className="mt-8 md:mt-0 md:w-1/3 flex flex-col items-center justify-center p-4 bg-slate-50 rounded-xl border border-gray-100 relative min-h-[250px]">
+          <div className="mt-8 md:mt-0 md:w-1/3 flex flex-col items-center justify-center p-4 bg-slate-50 rounded-xl border border-gray-100 relative min-h-[250px] animate-fadeIn">
              {/* Simple Statistical Visuals */}
              <HealthChart data={chartData} />
           </div>
@@ -415,7 +505,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Risks & Strengths Column */}
         <div className="lg:col-span-1 space-y-8">
-           <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-teal-500">
+           <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-teal-500 animate-slideUp delay-200">
              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2 mb-4">
                 <CheckCircle className="h-5 w-5 text-teal-500" /> Key Strengths
              </h3>
@@ -429,7 +519,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
              </ul>
            </div>
 
-           <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-rose-500">
+           <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-rose-500 animate-slideUp delay-300">
              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2 mb-4">
                 <AlertTriangle className="h-5 w-5 text-rose-500" /> Risk Factors
              </h3>
@@ -443,7 +533,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
              </ul>
            </div>
 
-           <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-blue-500">
+           <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-blue-500 animate-slideUp delay-400">
              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2 mb-4">
                 <Droplet className="h-5 w-5 text-blue-500" /> Nutritional Advice
              </h3>
@@ -459,7 +549,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
 
            {/* Google Search Sources */}
            {report.sources && report.sources.length > 0 && (
-             <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-gray-500">
+             <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-gray-500 animate-slideUp delay-500">
                 <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2 mb-4">
                     <ExternalLink className="h-5 w-5 text-gray-500" /> Verified Sources
                 </h3>
@@ -487,7 +577,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
 
         {/* Daily Routine Column */}
         <div className="lg:col-span-2 space-y-8">
-            <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+            <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden animate-slideUp delay-200">
                 <div className="p-6 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
                     <h3 className="text-xl font-bold text-gray-800">Recommended Daily Routine</h3>
                     <span className="text-sm text-gray-500">Customized for you</span>
@@ -517,7 +607,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, previousRepor
                 </div>
             </div>
             
-            <div className="mt-8 flex justify-center">
+            <div className="mt-8 flex justify-center animate-fadeIn delay-500">
                  <button 
                     onClick={onReset}
                     className="text-teal-600 hover:text-teal-800 font-medium text-sm flex items-center gap-2 underline underline-offset-4"

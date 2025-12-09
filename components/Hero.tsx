@@ -37,7 +37,7 @@ const Hero: React.FC<HeroProps> = ({ onStart, onOpenBloodBlog }) => {
           </div>
 
           <p className="mt-2 text-lg leading-8 text-gray-600">
-            Your Ultimate Health Partner analyzes your unique biological profile—including blood group, biometrics, and lifestyle—to generate a personalized health roadmap and daily routine designed just for you.
+            Unlock the secrets of your biology with instant, privacy-first AI analysis. Transform your health data into a dynamic, personalized roadmap designed to energize your body, sharpen your mind, and elevate your daily life.
           </p>
           
           <div className="mt-8 flex flex-col sm:flex-row items-start sm:items-center gap-4">
@@ -46,7 +46,7 @@ const Hero: React.FC<HeroProps> = ({ onStart, onOpenBloodBlog }) => {
               className="group rounded-full bg-gradient-to-r from-teal-600 to-emerald-500 px-8 py-4 text-base font-bold text-white shadow-lg shadow-teal-200 hover:shadow-xl hover:-translate-y-1 transition-all flex items-center gap-3"
             >
               <Stethoscope className="h-6 w-6 animate-[pulse_2s_ease-in-out_infinite]" />
-              <span>Start Assessment</span>
+              <span>Start Instant Assessment</span>
               <ArrowRight className="h-5 w-5 group-hover:translate-x-1 transition-transform" />
             </button>
             
