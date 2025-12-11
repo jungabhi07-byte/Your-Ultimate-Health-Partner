@@ -1,5 +1,6 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 import { HealthReport, UserProfile, Source } from "../types";
+import { ACTIVITY_LEVELS, DIETARY_PREFERENCES, BLOOD_GROUPS } from "../constants";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -16,6 +17,14 @@ const cleanJsonString = (str: string) => {
   cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1');
   
   return cleaned;
+};
+
+// Helper to calculate BMI locally for fast summary context
+const calculateBMI = (weight: string, height: string): number => {
+    const w = parseFloat(weight);
+    const h = parseFloat(height) / 100; // convert cm to m
+    if (isNaN(w) || isNaN(h) || h === 0) return 0;
+    return parseFloat((w / (h * h)).toFixed(1));
 };
 
 // New Service for Audio Transcription using Gemini 2.5 Flash
@@ -41,6 +50,121 @@ export const transcribeUserAudio = async (audioBase64: string, mimeType: string 
     console.error("Transcription failed:", error);
     throw new Error("Failed to transcribe audio.");
   }
+};
+
+export const extractProfileFromAudio = async (
+  audioBase64: string, 
+  mimeType: string = 'audio/webm',
+  focusedField?: string
+): Promise<Partial<UserProfile>> => {
+  try {
+    const activityOptions = ACTIVITY_LEVELS.map(l => l.value).join(', ');
+    const dietOptions = DIETARY_PREFERENCES.join(', ');
+    const bloodOptions = BLOOD_GROUPS.join(', ');
+
+    let prompt = "";
+
+    if (focusedField) {
+        // Targeted extraction for a specific field
+        prompt = `
+            The user is specifically providing input for the field: "${focusedField}".
+            Listen to the audio and extract ONLY the value for "${focusedField}".
+
+            Field Rules:
+            - age: Extract number (Years).
+            - weight: Extract number. Return in kg. If user says lbs/pounds, convert to kg.
+            - height: Extract number. Return in cm. If user says feet/inches, convert to cm.
+            - bloodGroup: Match exactly to one of: ${bloodOptions}.
+            - activityLevel: Match closest to one of: ${activityOptions}.
+            - dietaryPreference: Match closest to one of: ${dietOptions}.
+            - medicalHistory: Summarize the condition or text provided.
+            - gender: Extract 'Male', 'Female', or 'Other'.
+
+            Return ONLY a valid JSON object with the single key.
+            Example: {"${focusedField}": "value"}
+        `;
+    } else {
+        // Global extraction for auto-fill
+        prompt = `
+          Listen to the user's voice input regarding their health profile. 
+          Extract the following fields if mentioned. Return keys only for found data.
+          
+          Fields to extract:
+          - age (number)
+          - gender (Male, Female, Other)
+          - weight (number, ALWAYS convert to kg)
+          - height (number, ALWAYS convert to cm)
+          - bloodGroup (Match exactly to one of: ${bloodOptions})
+          - activityLevel (Match exactly to one of: ${activityOptions})
+          - dietaryPreference (Match closest to one of: ${dietOptions})
+          - medicalHistory (Summary of conditions mentioned)
+
+          CRITICAL RULES for distinguishing numbers:
+          - If the user says "years" or "old", it is AGE.
+          - If the user says "kg", "kilos", "pounds", "lbs", it is WEIGHT.
+          - If the user says "cm", "centimeters", "feet", "tall", it is HEIGHT.
+          - If unit is not specified, use these ranges to guess:
+             * Age: 1 - 100
+             * Weight: 40 - 200 (likely kg)
+             * Height: 130 - 220 (likely cm)
+
+          Return ONLY a valid JSON object. Do not include markdown.
+          Example: {"age": "30", "gender": "Male", "weight": "75", "height": "180", "activityLevel": "active"}
+        `;
+    }
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: {
+        parts: [
+            { inlineData: { mimeType, data: audioBase64 } },
+            { text: prompt }
+        ]
+      },
+      config: {
+          responseMimeType: 'application/json'
+      }
+    });
+
+    const text = response.text || "{}";
+    const cleanedText = cleanJsonString(text);
+    return JSON.parse(cleanedText);
+  } catch (error) {
+    console.error("Profile extraction failed:", error);
+    return {};
+  }
+};
+
+// Independent function to generate just the summary quickly (for Audio/Parallelism)
+export const generateFastSummary = async (profile: UserProfile): Promise<string> => {
+    try {
+        const bmi = calculateBMI(profile.weight, profile.height);
+        const prompt = `
+            Act as a world-class preventative health consultant.
+            
+            User Profile:
+            - Age: ${profile.age}, Gender: ${profile.gender}
+            - BMI: ${bmi}
+            - Activity: ${profile.activityLevel}
+            - Diet: ${profile.dietaryPreference}
+            - History: ${profile.medicalHistory || "None"}
+
+            Instructions:
+            Write a SHORT, PUNCHY, and ENGAGING health summary (Max 3 sentences).
+            Address the user as "You". Focus on the big picture of their health status.
+            Be encouraging.
+        `;
+
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+        });
+
+        return response.text || "Your health profile has been analyzed.";
+    } catch (e) {
+        console.error("Fast summary failed", e);
+        return "Your comprehensive health report is ready.";
+    }
 };
 
 export const generateHealthReport = async (profile: UserProfile): Promise<HealthReport> => {
@@ -146,9 +270,17 @@ export const generateHealthReport = async (profile: UserProfile): Promise<Health
   }
 };
 
-export const generateReportVisual = async (summary: string, theme: string = 'Modern Medical'): Promise<string | undefined> => {
+export const generateReportVisual = async (input: string | UserProfile, theme: string = 'Modern Medical'): Promise<string | undefined> => {
   try {
-    const prompt = `Create a visually stunning, abstract, and uplifting digital art representation of this health summary: "${summary}". 
+    let promptText = "";
+    
+    if (typeof input === 'string') {
+        promptText = `health summary: "${input}"`;
+    } else {
+        promptText = `health profile: Age ${input.age}, Gender ${input.gender}, Blood Type ${input.bloodGroup}, Activity ${input.activityLevel}, Diet ${input.dietaryPreference}`;
+    }
+
+    const prompt = `Create a visually stunning, abstract, and uplifting digital art representation of this ${promptText}. 
     The requested visual theme is: "${theme}". Use color palettes and styles associated with this theme.
     The image should represent vitality, balance, and the specific biological themes mentioned (e.g., blood cells, energy flow, nature). 
     Do not include text in the image.`;

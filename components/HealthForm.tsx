@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { UserProfile } from '../types';
-import { BLOOD_GROUPS, ACTIVITY_LEVELS, DIETARY_PREFERENCES } from '../constants';
+import { BLOOD_GROUPS, ACTIVITY_LEVELS, DIETARY_PREFERENCES, INITIAL_USER_PROFILE } from '../constants';
 import { ChevronRight, ChevronLeft, User, Droplet, Activity, Utensils, Mic, MicOff, AlertCircle, X, Loader2 } from 'lucide-react';
-import { transcribeUserAudio } from '../services/geminiService';
+import { extractProfileFromAudio } from '../services/geminiService';
 
 interface HealthFormProps {
   initialData: UserProfile;
@@ -10,19 +10,69 @@ interface HealthFormProps {
   onCancel: () => void;
 }
 
-// Parsing Result Interface
-interface ParseResult {
-  valid: boolean;
-  value: string;
-  error?: string;
-}
+// --- Audio Feedback Utilities ---
+const playSuccessSound = () => {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const audioCtx = new AudioContextClass();
+    
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+
+    // Pleasant "ding" (Sine wave, high pitch with decay)
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
+    
+    // Smooth ADSR envelope
+    gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+    gainNode.gain.linearRampToValueAtTime(0.15, audioCtx.currentTime + 0.05);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+
+    oscillator.start();
+    oscillator.stop(audioCtx.currentTime + 0.5);
+  } catch (e) {
+    console.error("Audio feedback failed", e);
+  }
+};
+
+const playErrorSound = () => {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const audioCtx = new AudioContextClass();
+    
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+
+    // Low "buzz" (Sawtooth wave)
+    oscillator.type = 'sawtooth';
+    oscillator.frequency.setValueAtTime(100, audioCtx.currentTime);
+    oscillator.frequency.linearRampToValueAtTime(80, audioCtx.currentTime + 0.3);
+    
+    gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    gainNode.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+
+    oscillator.start();
+    oscillator.stop(audioCtx.currentTime + 0.3);
+  } catch (e) {
+      console.error("Audio feedback failed", e);
+  }
+};
 
 const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel }) => {
   const [data, setData] = useState<UserProfile>(initialData);
   const [step, setStep] = useState(1);
   const [errors, setErrors] = useState<Partial<Record<keyof UserProfile, string>>>({});
   
-  const [listeningField, setListeningField] = useState<keyof UserProfile | null>(null);
+  // 'all' for global auto-fill, specific key for single field validation
+  const [listeningField, setListeningField] = useState<keyof UserProfile | 'all' | null>(null);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
   
@@ -52,9 +102,11 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
   const validateField = (field: keyof UserProfile, value: string): string => {
     switch (field) {
       case 'age':
-        if (!value) return 'Age is required.';
+        if (!value || !value.trim()) return 'Age is required.';
         const age = Number(value);
-        if (isNaN(age) || age < 1 || age > 120) return 'Age must be between 1 and 120.';
+        if (isNaN(age)) return 'Age must be a valid number.';
+        if (!Number.isInteger(age)) return 'Age must be a whole number.';
+        if (age < 1 || age > 120) return 'Age must be between 1 and 120.';
         return '';
       case 'gender':
         return value ? '' : 'Gender is required.';
@@ -207,56 +259,9 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
     }
   };
 
-  // --- Parsing Strategies ---
+  // --- Voice Logic ---
 
-  const parseNumeric = (text: string, min: number, max: number, fieldName: string): ParseResult => {
-    // Extract all numbers from the text (handles decimals)
-    const matches = text.match(/(\d+(\.\d+)?)/g);
-    if (!matches) {
-      return { valid: false, value: '', error: `Could not hear a number for ${fieldName}. Please try again.` };
-    }
-    
-    // Find the first number that falls within a reasonable range
-    const validNum = matches.find(numStr => {
-      const val = parseFloat(numStr);
-      return val >= min && val <= max;
-    });
-
-    if (validNum) {
-      return { valid: true, value: validNum };
-    }
-    return { valid: false, value: '', error: `${fieldName} detected (${matches[0]}) seems invalid. Range: ${min}-${max}.` };
-  };
-
-  const parseOption = (text: string, options: { value: string, keywords: string[] }[]): ParseResult => {
-    const lower = text.toLowerCase();
-    
-    // Sort options by specificity (optional, but good if keywords overlap)
-    for (const opt of options) {
-      // Check if any keyword for this option exists in the spoken text
-      if (opt.keywords.some(k => lower.includes(k))) {
-        return { valid: true, value: opt.value };
-      }
-    }
-    return { valid: false, value: '', error: "Could not match your input to an option. Try using the dropdown list terms." };
-  };
-
-  const parseFreeText = (text: string): ParseResult => {
-    if (!text || text.trim().length === 0) return { valid: false, value: '', error: "No input detected." };
-    
-    // Check for clear commands
-    const lower = text.toLowerCase();
-    if (lower === 'clear' || lower === 'none' || lower === 'nothing' || lower === 'delete') {
-      return { valid: true, value: '' }; // Clear the field
-    }
-
-    // Capitalize first letter
-    const formatted = text.charAt(0).toUpperCase() + text.slice(1);
-    return { valid: true, value: formatted };
-  };
-
-  // --- Voice Auto-Fill Logic (Consolidated) ---
-  const handleGlobalVoiceInput = async () => {
+  const startRecording = async (field: keyof UserProfile | 'all') => {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const mediaRecorder = new MediaRecorder(stream);
@@ -271,21 +276,22 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
 
         mediaRecorder.onstop = async () => {
              const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-             await processGlobalAudio(audioBlob);
+             await processAudio(audioBlob, field);
              stream.getTracks().forEach(track => track.stop());
         };
 
         mediaRecorder.start();
-        setListeningField('age'); // Use 'age' as a placeholder to indicate listening state globally
+        setListeningField(field);
         setSpeechError(null);
 
     } catch (err) {
         console.error("Microphone access denied", err);
         setSpeechError("Microphone access denied or not available.");
+        playErrorSound();
     }
   };
 
-  const stopGlobalRecording = () => {
+  const stopRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
         setListeningField(null);
@@ -293,120 +299,83 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
     }
   };
 
-  const processGlobalAudio = async (audioBlob: Blob) => {
+  const processAudio = async (audioBlob: Blob, targetField: keyof UserProfile | 'all') => {
     try {
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
         reader.onloadend = async () => {
             const base64String = (reader.result as string).split(',')[1];
-            // 1. Transcribe
-            const transcript = await transcribeUserAudio(base64String, audioBlob.type);
-            setIsProcessingAudio(false);
             
-            if (transcript) {
-                console.log("Global Transcript:", transcript);
-                // 2. Parse all fields from the single transcript
-                // Note: We reuse the parsing logic but apply it sequentially based on keywords found
-                
-                // Attempt to find numbers
-                const numbers = transcript.match(/(\d+(\.\d+)?)/g) || [];
-                
-                // Heuristic: First number between 1-100 might be age
-                const potentialAge = numbers.find(n => { const v=parseFloat(n); return v > 0 && v < 120; });
-                if (potentialAge && !data.age) handleChange('age', potentialAge);
-                
-                // Heuristic: Larger numbers might be weight/height. This is tricky without more context or advanced NLP,
-                // but for now, let's rely on specific parsers if we can, or just gender/blood type which are unique.
-                
-                processVoiceInput('gender', transcript);
-                processVoiceInput('bloodGroup', transcript);
-                processVoiceInput('activityLevel', transcript);
-                processVoiceInput('dietaryPreference', transcript);
-                
-                // If it's a long sentence, it might be medical history if currently on step 3
-                if (step === 3 && transcript.length > 20) {
-                     processVoiceInput('medicalHistory', transcript);
-                }
+            setIsProcessingAudio(true);
+            
+            // If targetField is 'all', we pass undefined to focusedField to trigger global extraction
+            // If targetField is a specific key, we pass it as focusedField to trigger targeted extraction
+            const focusedField = targetField === 'all' ? undefined : targetField;
+            
+            const profileData = await extractProfileFromAudio(base64String, audioBlob.type, focusedField);
+            
+            setIsProcessingAudio(false);
 
-                setSpeechError("Voice data applied. Please review fields.");
+            if (Object.keys(profileData).length === 0) {
+                 setSpeechError(targetField === 'all' ? "No valid health data detected." : `Could not understand input for ${targetField}.`);
+                 playErrorSound();
+                 return;
+            }
+
+            let updateCount = 0;
+            
+            // Iterate through returned data and update matching fields
+            Object.entries(profileData).forEach(([key, value]) => {
+                 if (value !== undefined && value !== null && value !== '' && (INITIAL_USER_PROFILE as any).hasOwnProperty(key)) {
+                    const field = key as keyof UserProfile;
+                    
+                    // Extra check: if we are in targeted mode, ONLY update the target field
+                    if (targetField !== 'all' && field !== targetField) {
+                        return;
+                    }
+
+                    handleChange(field, String(value));
+                    updateCount++;
+                 }
+            });
+
+            if (updateCount > 0) {
+                setSpeechError(null);
+                playSuccessSound();
             } else {
-                setSpeechError("Could not understand audio.");
+                setSpeechError("Could not map voice input to fields.");
+                playErrorSound();
             }
         };
     } catch (error) {
         console.error("Processing failed", error);
         setIsProcessingAudio(false);
         setSpeechError("Failed to process audio.");
+        playErrorSound();
     }
   };
 
-  const processVoiceInput = (field: keyof UserProfile, text: string) => {
-    // ... existing processVoiceInput logic (reuse your existing one)
-    console.log(`Voice Input for ${field}: ${text}`);
-    let result: ParseResult = { valid: false, value: '', error: 'Unknown error' };
-
-    switch (field) {
-      case 'age':
-        result = parseNumeric(text, 1, 120, 'Age');
-        break;
-      case 'weight':
-        result = parseNumeric(text, 2, 500, 'Weight');
-        break;
-      case 'height':
-        result = parseNumeric(text, 30, 300, 'Height');
-        break;
-      case 'gender':
-        result = parseOption(text, [
-          { value: 'Female', keywords: ['female', 'woman', 'girl', 'she', 'her', 'lady'] },
-          { value: 'Male', keywords: ['male', 'man', 'boy', 'he', 'him', 'guy'] },
-          { value: 'Other', keywords: ['other', 'non-binary', 'diverse'] }
-        ]);
-        break;
-      case 'bloodGroup':
-         let cleanBg = text.toLowerCase()
-            .replace(/positive|plus|pos/, '+')
-            .replace(/negative|minus|neg/, '-')
-            .replace(/type/, '')
-            .replace(/\s/g, '')
-            .toUpperCase();
-         const sortedGroups = [...BLOOD_GROUPS].sort((a, b) => b.length - a.length);
-         const foundBg = sortedGroups.find(bg => cleanBg.includes(bg));
-         if (foundBg) result = { valid: true, value: foundBg };
-        break;
-      case 'activityLevel':
-        result = parseOption(text, [
-          { value: 'sedentary', keywords: ['sedentary', 'lazy', 'none', 'sitting', 'couch', 'little'] },
-          { value: 'light', keywords: ['light', 'mild', 'walk', 'easy', 'occasional'] },
-          { value: 'moderate', keywords: ['moderate', 'medium', 'average', 'normal', 'regular'] },
-          { value: 'athlete', keywords: ['super', 'athlete', 'pro', 'intense', 'very active', 'training'] },
-          { value: 'active', keywords: ['active', 'hard', 'heavy', 'gym', 'sport'] } 
-        ]);
-        break;
-      case 'dietaryPreference':
-        result = parseOption(text, [
-          { value: 'Vegetarian (No meat)', keywords: ['vegetarian', 'no meat', 'veggie'] },
-          { value: 'Vegan (Plants only)', keywords: ['vegan', 'plant', 'plants'] },
-          { value: 'Pescatarian (Fish allowed)', keywords: ['pescatarian', 'fish', 'seafood'] },
-          { value: 'Low Carb / Keto', keywords: ['keto', 'low carb', 'carbs', 'ketogenic'] },
-          { value: 'Gluten-Free', keywords: ['gluten', 'celiac', 'wheat'] },
-          { value: 'Dairy-Free', keywords: ['dairy', 'lactose', 'milk'] },
-          { value: 'I eat everything', keywords: ['everything', 'all', 'anything', 'omnivore', 'normal', 'none'] }
-        ]);
-        break;
-      case 'medicalHistory':
-        result = parseFreeText(text);
-        break;
-      default:
-        result = { valid: true, value: text };
-    }
-
-    if (result.valid) {
-        // Only update if current value is empty or we are explicit
-        handleChange(field, result.value);
-    }
+  const renderMicButton = (field: keyof UserProfile, className: string = "absolute right-2 top-1/2 -translate-y-1/2") => {
+    // Explicitly cast to string to avoid "no overlap" error between keyof UserProfile and 'all' if TS infers incorrectly
+    const isListening = (listeningField as string) === field;
+    return (
+        <button
+            type="button"
+            onClick={() => isListening ? stopRecording() : startRecording(field)}
+            className={`${className} p-1.5 rounded-full transition-all z-10 ${
+                isListening 
+                ? 'bg-rose-100 text-rose-600 animate-pulse ring-2 ring-rose-400' 
+                : 'text-gray-400 hover:text-teal-600 hover:bg-teal-50'
+            }`}
+            title="Tap to speak"
+        >
+            {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+        </button>
+    );
   };
 
-  const isGlobalListening = listeningField !== null;
+  // Explicitly cast to string to avoid "no overlap" error
+  const isGlobalListening = (listeningField as string) === 'all';
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
@@ -418,17 +387,17 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
             
             <div className="flex items-center gap-4">
                  <button
-                    onClick={() => isGlobalListening ? stopGlobalRecording() : handleGlobalVoiceInput()}
+                    onClick={() => isGlobalListening ? stopRecording() : startRecording('all')}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
                         isGlobalListening 
                         ? 'bg-rose-100 text-rose-600 ring-2 ring-rose-400 animate-pulse' 
-                        : isProcessingAudio 
+                        : isProcessingAudio && (listeningField as string) === 'all'
                             ? 'bg-gray-200 text-gray-500' 
                             : 'bg-teal-100 text-teal-700 hover:bg-teal-200'
                     }`}
                 >
-                    {isGlobalListening ? <MicOff className="h-3 w-3" /> : isProcessingAudio ? <Loader2 className="h-3 w-3 animate-spin" /> : <Mic className="h-3 w-3" />}
-                    {isGlobalListening ? 'Stop Recording' : isProcessingAudio ? 'Processing...' : 'Auto-Fill with Voice'}
+                    {isGlobalListening ? <MicOff className="h-3 w-3" /> : (isProcessingAudio && (listeningField as string) === 'all') ? <Loader2 className="h-3 w-3 animate-spin" /> : <Mic className="h-3 w-3" />}
+                    {isGlobalListening ? 'Stop Recording' : (isProcessingAudio && (listeningField as string) === 'all') ? 'Analyzing...' : 'Auto-Fill with Voice'}
                 </button>
 
                 <div className="flex gap-2">
@@ -457,9 +426,10 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
                         value={data.age}
                         onChange={(e) => handleChange('age', e.target.value)}
                         onBlur={() => handleBlur('age')}
-                        className={`w-full rounded-lg bg-white text-gray-900 placeholder:text-gray-400 shadow-sm p-2.5 border ${errors.age ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'}`}
+                        className={`w-full rounded-lg bg-white text-gray-900 placeholder:text-gray-400 shadow-sm p-2.5 pr-10 border ${errors.age ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'}`}
                         placeholder="Years"
                     />
+                    {renderMicButton('age')}
                   </div>
                   {errors.age && (
                     <p className="mt-1 text-xs text-rose-500 flex items-center gap-1">
@@ -469,17 +439,24 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
-                  <select
-                    value={data.gender}
-                    onChange={(e) => handleChange('gender', e.target.value)}
-                    onBlur={() => handleBlur('gender')}
-                    className={`w-full rounded-lg bg-white text-gray-900 shadow-sm p-2.5 border ${errors.gender ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'}`}
-                  >
-                    <option value="">Select...</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Other">Other</option>
-                  </select>
+                  <div className="relative">
+                    <select
+                        value={data.gender}
+                        onChange={(e) => handleChange('gender', e.target.value)}
+                        onBlur={() => handleBlur('gender')}
+                        className={`w-full rounded-lg bg-white text-gray-900 shadow-sm p-2.5 pr-10 border ${errors.gender ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'} appearance-none`}
+                    >
+                        <option value="">Select...</option>
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                        <option value="Other">Other</option>
+                    </select>
+                    {/* Custom Arrow for select to avoid overlap with Mic */}
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                        <svg className="fill-current h-4 w-4 mr-8" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                    </div>
+                    {renderMicButton('gender', "absolute right-1 top-1/2 -translate-y-1/2")}
+                  </div>
                   {errors.gender && (
                     <p className="mt-1 text-xs text-rose-500 flex items-center gap-1">
                       <AlertCircle className="h-3 w-3" /> {errors.gender}
@@ -488,14 +465,17 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Weight (kg)</label>
-                  <input
-                    type="number"
-                    value={data.weight}
-                    onChange={(e) => handleChange('weight', e.target.value)}
-                    onBlur={() => handleBlur('weight')}
-                    className={`w-full rounded-lg bg-white text-gray-900 placeholder:text-gray-400 shadow-sm p-2.5 border ${errors.weight ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'}`}
-                    placeholder="kg"
-                  />
+                  <div className="relative">
+                    <input
+                        type="number"
+                        value={data.weight}
+                        onChange={(e) => handleChange('weight', e.target.value)}
+                        onBlur={() => handleBlur('weight')}
+                        className={`w-full rounded-lg bg-white text-gray-900 placeholder:text-gray-400 shadow-sm p-2.5 pr-10 border ${errors.weight ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'}`}
+                        placeholder="kg"
+                    />
+                    {renderMicButton('weight')}
+                  </div>
                   {errors.weight && (
                     <p className="mt-1 text-xs text-rose-500 flex items-center gap-1">
                       <AlertCircle className="h-3 w-3" /> {errors.weight}
@@ -504,14 +484,17 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Height (cm)</label>
-                  <input
-                    type="number"
-                    value={data.height}
-                    onChange={(e) => handleChange('height', e.target.value)}
-                    onBlur={() => handleBlur('height')}
-                    className={`w-full rounded-lg bg-white text-gray-900 placeholder:text-gray-400 shadow-sm p-2.5 border ${errors.height ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'}`}
-                    placeholder="cm"
-                  />
+                  <div className="relative">
+                    <input
+                        type="number"
+                        value={data.height}
+                        onChange={(e) => handleChange('height', e.target.value)}
+                        onBlur={() => handleBlur('height')}
+                        className={`w-full rounded-lg bg-white text-gray-900 placeholder:text-gray-400 shadow-sm p-2.5 pr-10 border ${errors.height ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'}`}
+                        placeholder="cm"
+                    />
+                    {renderMicButton('height')}
+                  </div>
                   {errors.height && (
                     <p className="mt-1 text-xs text-rose-500 flex items-center gap-1">
                       <AlertCircle className="h-3 w-3" /> {errors.height}
@@ -548,7 +531,10 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
               <div className="space-y-6">
                 <div>
                   <div className="flex justify-between items-center mb-2">
-                    <label className="block text-sm font-medium text-gray-700">Blood Group</label>
+                    <label className="block text-sm font-medium text-gray-700 flex items-center gap-2">
+                        Blood Group
+                        {renderMicButton('bloodGroup', "relative ml-2")}
+                    </label>
                   </div>
                   <div className="grid grid-cols-4 gap-3">
                     {BLOOD_GROUPS.map(bg => (
@@ -574,17 +560,23 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
 
                 <div>
                    <label className="block text-sm font-medium text-gray-700 mb-1">Activity Level</label>
-                  <select
-                    value={data.activityLevel}
-                    onChange={(e) => handleChange('activityLevel', e.target.value)}
-                    onBlur={() => handleBlur('activityLevel')}
-                    className={`w-full rounded-lg bg-white text-gray-900 shadow-sm p-2.5 border ${errors.activityLevel ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'}`}
-                  >
-                    <option value="">Select Level...</option>
-                    {ACTIVITY_LEVELS.map(level => (
-                      <option key={level.value} value={level.value}>{level.label}</option>
-                    ))}
-                  </select>
+                   <div className="relative">
+                        <select
+                            value={data.activityLevel}
+                            onChange={(e) => handleChange('activityLevel', e.target.value)}
+                            onBlur={() => handleBlur('activityLevel')}
+                            className={`w-full rounded-lg bg-white text-gray-900 shadow-sm p-2.5 pr-10 border ${errors.activityLevel ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'} appearance-none`}
+                        >
+                            <option value="">Select Level...</option>
+                            {ACTIVITY_LEVELS.map(level => (
+                            <option key={level.value} value={level.value}>{level.label}</option>
+                            ))}
+                        </select>
+                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                            <svg className="fill-current h-4 w-4 mr-8" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                        </div>
+                        {renderMicButton('activityLevel', "absolute right-1 top-1/2 -translate-y-1/2")}
+                   </div>
                   {errors.activityLevel && (
                     <p className="mt-1 text-xs text-rose-500 flex items-center gap-1">
                       <AlertCircle className="h-3 w-3" /> {errors.activityLevel}
@@ -621,16 +613,22 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
               <div className="space-y-6">
                  <div>
                    <label className="block text-sm font-medium text-gray-700 mb-1">Dietary Preferences</label>
-                  <select
-                    value={data.dietaryPreference}
-                    onChange={(e) => handleChange('dietaryPreference', e.target.value)}
-                    onBlur={() => handleBlur('dietaryPreference')}
-                    className={`w-full rounded-lg bg-white text-gray-900 shadow-sm p-2.5 border ${errors.dietaryPreference ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'}`}
-                  >
-                    {DIETARY_PREFERENCES.map(pref => (
-                      <option key={pref} value={pref}>{pref}</option>
-                    ))}
-                  </select>
+                   <div className="relative">
+                        <select
+                            value={data.dietaryPreference}
+                            onChange={(e) => handleChange('dietaryPreference', e.target.value)}
+                            onBlur={() => handleBlur('dietaryPreference')}
+                            className={`w-full rounded-lg bg-white text-gray-900 shadow-sm p-2.5 pr-10 border ${errors.dietaryPreference ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'} appearance-none`}
+                        >
+                            {DIETARY_PREFERENCES.map(pref => (
+                            <option key={pref} value={pref}>{pref}</option>
+                            ))}
+                        </select>
+                         <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                            <svg className="fill-current h-4 w-4 mr-8" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                        </div>
+                        {renderMicButton('dietaryPreference', "absolute right-1 top-1/2 -translate-y-1/2")}
+                   </div>
                   {errors.dietaryPreference && (
                     <p className="mt-1 text-xs text-rose-500 flex items-center gap-1">
                       <AlertCircle className="h-3 w-3" /> {errors.dietaryPreference}
@@ -640,14 +638,17 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
 
                 <div>
                    <label className="block text-sm font-medium text-gray-700 mb-1">Medical Conditions or Concerns (Optional)</label>
-                  <textarea
-                    rows={3}
-                    value={data.medicalHistory}
-                    onChange={(e) => handleChange('medicalHistory', e.target.value)}
-                    onBlur={() => handleBlur('medicalHistory')}
-                    className={`w-full rounded-lg bg-white text-gray-900 placeholder:text-gray-400 shadow-sm p-2.5 border ${errors.medicalHistory ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'}`}
-                    placeholder="e.g., Diabetes in family, knee pain, low blood pressure..."
-                  />
+                   <div className="relative">
+                        <textarea
+                            rows={3}
+                            value={data.medicalHistory}
+                            onChange={(e) => handleChange('medicalHistory', e.target.value)}
+                            onBlur={() => handleBlur('medicalHistory')}
+                            className={`w-full rounded-lg bg-white text-gray-900 placeholder:text-gray-400 shadow-sm p-2.5 pr-10 border ${errors.medicalHistory ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500' : 'border-gray-300 focus:border-teal-500 focus:ring-teal-500'}`}
+                            placeholder="e.g., Diabetes in family, knee pain, low blood pressure..."
+                        />
+                        {renderMicButton('medicalHistory', "absolute right-2 top-2")}
+                   </div>
                    {errors.medicalHistory && (
                     <p className="mt-1 text-xs text-rose-500 flex items-center gap-1">
                       <AlertCircle className="h-3 w-3" /> {errors.medicalHistory}
@@ -679,7 +680,7 @@ const HealthForm: React.FC<HealthFormProps> = ({ initialData, onSubmit, onCancel
         
         {/* Global Error Indicator */}
         {speechError && (
-             <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-rose-600 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2 shadow-lg animate-fadeIn z-10 transition-opacity">
+             <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-rose-600 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2 shadow-lg animate-fadeIn z-20 transition-opacity">
                 <AlertCircle className="h-4 w-4" />
                 {speechError}
             </div>

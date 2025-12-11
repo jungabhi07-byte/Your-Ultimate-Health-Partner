@@ -17,7 +17,10 @@ import {
   ArrowLeft,
   Volume2,
   Download,
-  RefreshCw
+  RefreshCw,
+  RotateCcw,
+  RotateCw,
+  Share2
 } from 'lucide-react';
 import { generateAudioSummary, generateReportVisual } from '../services/geminiService';
 import HealthChart from './HealthChart';
@@ -25,34 +28,51 @@ import { jsPDF } from 'jspdf';
 
 interface ReportDashboardProps {
   report: HealthReport;
+  initialAudioBase64: string | null;
   onReset: () => void;
-  // removed previousReport prop
 }
 
-const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) => {
+const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, initialAudioBase64, onReset }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
-  const [preloadedAudioBase64, setPreloadedAudioBase64] = useState<string | null>(null);
+  const [preloadedAudioBase64, setPreloadedAudioBase64] = useState<string | null>(initialAudioBase64);
   
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(1.0);
   
   const [isRegeneratingVisual, setIsRegeneratingVisual] = useState(false);
   const [visualData, setVisualData] = useState<string | undefined>(report.visualBase64);
 
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
   const startTimeRef = useRef<number>(0);
   const pausedTimeRef = useRef<number>(0);
   const rafRef = useRef<number>(0);
+  const progressBarRef = useRef<HTMLDivElement>(null);
 
   // Sync visualData with report prop if it changes
   useEffect(() => {
     setVisualData(report.visualBase64);
   }, [report.visualBase64]);
 
-  // Pre-fetch audio when report loads
+  // Sync audio if initial prop updates
+  useEffect(() => {
+    if (initialAudioBase64) {
+        setPreloadedAudioBase64(initialAudioBase64);
+    }
+  }, [initialAudioBase64]);
+
+  // Update volume whenever it changes
+  useEffect(() => {
+    if (gainNodeRef.current) {
+        gainNodeRef.current.gain.value = volume;
+    }
+  }, [volume]);
+
+  // Pre-fetch audio when report loads if NOT passed as prop
   useEffect(() => {
     let isMounted = true;
     const fetchAudio = async () => {
@@ -67,12 +87,12 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
         }
     };
     
-    if (!preloadedAudioBase64) {
+    if (!preloadedAudioBase64 && !initialAudioBase64) {
         fetchAudio();
     }
     
     return () => { isMounted = false; };
-  }, [report.summary]);
+  }, [report.summary, preloadedAudioBase64, initialAudioBase64]);
 
   // Animation Loop for Progress Bar
   useEffect(() => {
@@ -196,6 +216,21 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
     return buffer;
   };
 
+  const initAudioContext = (): AudioContext => {
+    if (audioContext) return audioContext;
+    
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+    
+    // Create Gain Node for Volume Control
+    const gainNode = ctx.createGain();
+    gainNode.gain.value = volume;
+    gainNode.connect(ctx.destination);
+    gainNodeRef.current = gainNode;
+
+    setAudioContext(ctx);
+    return ctx;
+  };
+
   const handlePlayAudio = async () => {
     if (isPlaying) {
       if (sourceNodeRef.current && audioContext) {
@@ -210,8 +245,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
 
     let ctx = audioContext;
     if (!ctx) {
-        ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-        setAudioContext(ctx);
+        ctx = initAudioContext();
     }
 
     if (ctx.state === 'suspended') {
@@ -255,9 +289,18 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
         try { sourceNodeRef.current.stop(); } catch(e) {}
     }
 
+    // Defensive check to ensure gain node is connected
+    if (!gainNodeRef.current) {
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = volume;
+        gainNode.connect(ctx.destination);
+        gainNodeRef.current = gainNode;
+    }
+
     const source = ctx.createBufferSource();
     source.buffer = buffer;
-    source.connect(ctx.destination);
+    // Connect to Gain Node instead of directly to destination
+    source.connect(gainNodeRef.current);
     
     source.onended = () => {};
 
@@ -277,6 +320,47 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
     }, durationRemaining * 1000 + 200); 
   };
 
+  const handleSkip = (seconds: number) => {
+    if (!audioBuffer) return; // Can't skip if no audio
+    
+    let newTime = currentTime + seconds;
+    if (newTime < 0) newTime = 0;
+    if (newTime > duration) newTime = duration;
+
+    // If currently playing, we need to restart playback at the new time
+    if (isPlaying && audioContext) {
+        if (sourceNodeRef.current) {
+            try { sourceNodeRef.current.stop(); } catch(e) {}
+        }
+        playBuffer(audioContext, audioBuffer, newTime);
+        setCurrentTime(newTime); // Update visual immediately
+    } else {
+        // Just update pointers if paused
+        setCurrentTime(newTime);
+        pausedTimeRef.current = newTime;
+    }
+  };
+
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!progressBarRef.current || duration === 0 || !audioBuffer) return;
+    
+    const rect = progressBarRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const percentage = Math.min(Math.max(x / rect.width, 0), 1);
+    const newTime = percentage * duration;
+    
+    if (isPlaying && audioContext) {
+        if (sourceNodeRef.current) {
+            try { sourceNodeRef.current.stop(); } catch(e) {}
+        }
+        playBuffer(audioContext, audioBuffer, newTime);
+        setCurrentTime(newTime);
+    } else {
+        setCurrentTime(newTime);
+        pausedTimeRef.current = newTime;
+    }
+  };
+
   const handleRegenerateVisual = async () => {
     if (isRegeneratingVisual) return;
     setIsRegeneratingVisual(true);
@@ -289,6 +373,44 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
         console.error("Failed to regenerate visual", e);
     } finally {
         setIsRegeneratingVisual(false);
+    }
+  };
+
+  const handleShare = async () => {
+    // Construct a meaningful shareable text block
+    const shareText = `
+My Health Assessment Results 🏥
+from Your Ultimate Health Partner
+
+Overall Wellness: ${report.overallHealthScore}/100
+BMI: ${report.bmi.toFixed(1)} (${report.bmiCategory})
+
+Key Summary:
+${report.summary}
+
+Top Strength: ${report.keyStrengths?.[0] || 'N/A'}
+Main Risk Factor: ${report.potentialRisks?.[0] || 'None'}
+
+(Generated by AI)
+    `.trim();
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'My Health Report',
+          text: shareText,
+        });
+      } catch (error) {
+        // User aborted
+      }
+    } else {
+      // Fallback to clipboard
+      try {
+        await navigator.clipboard.writeText(shareText);
+        alert('Report summary copied to clipboard!');
+      } catch (err) {
+        console.error('Failed to copy', err);
+      }
     }
   };
 
@@ -377,7 +499,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8 animate-fadeIn">
       
-      {/* Back to Home & Download Header */}
+      {/* Back to Home & Actions Header */}
       <div className="flex justify-between items-center animate-slideUp">
         <button 
           onClick={onReset}
@@ -387,13 +509,23 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
           <span>Back to Home</span>
         </button>
         
-        <button
-            onClick={handleDownloadPDF}
-            className="flex items-center text-teal-600 hover:text-teal-800 transition-colors gap-2 bg-teal-50 px-4 py-2 rounded-lg hover:bg-teal-100"
-        >
-            <Download className="h-4 w-4" />
-            <span className="font-medium text-sm">Download Report</span>
-        </button>
+        <div className="flex gap-3">
+            <button
+                onClick={handleShare}
+                className="flex items-center text-indigo-600 hover:text-indigo-800 transition-colors gap-2 bg-indigo-50 px-4 py-2 rounded-lg hover:bg-indigo-100"
+            >
+                <Share2 className="h-4 w-4" />
+                <span className="font-medium text-sm">Share Report</span>
+            </button>
+
+            <button
+                onClick={handleDownloadPDF}
+                className="flex items-center text-teal-600 hover:text-teal-800 transition-colors gap-2 bg-teal-50 px-4 py-2 rounded-lg hover:bg-teal-100"
+            >
+                <Download className="h-4 w-4" />
+                <span className="font-medium text-sm">Download PDF</span>
+            </button>
+        </div>
       </div>
 
       {/* Header Visual & Summary */}
@@ -439,7 +571,7 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
           <div className="flex-1 space-y-4">
             
             {/* Audio Player Controls */}
-            <div className="flex flex-col gap-2 w-full max-w-lg mb-4 bg-gray-50 p-3 rounded-xl border border-gray-100">
+            <div className="flex flex-col gap-3 w-full max-w-lg mb-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
                <div className="flex items-center gap-3">
                     <button 
                         onClick={handlePlayAudio}
@@ -467,17 +599,60 @@ const ReportDashboard: React.FC<ReportDashboardProps> = ({ report, onReset }) =>
                                 <span>{formatTime(currentTime)} / {formatTime(duration)}</span>
                             )}
                         </div>
-                        {/* Progress Bar */}
-                        <div className="h-2 bg-gray-200 rounded-full overflow-hidden relative">
+                        {/* Interactive Progress Bar */}
+                        <div 
+                            ref={progressBarRef}
+                            onClick={handleSeek}
+                            className="h-2 bg-gray-200 rounded-full overflow-hidden relative cursor-pointer group"
+                        >
                             <div 
-                                className={`absolute top-0 left-0 h-full rounded-full transition-all duration-100 ease-linear ${isPlaying ? 'bg-teal-500' : 'bg-gray-400'}`}
+                                className={`absolute top-0 left-0 h-full rounded-full transition-all duration-100 ease-linear ${isPlaying ? 'bg-teal-500' : 'bg-gray-400'} group-hover:bg-teal-400`}
                                 style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
                             />
                         </div>
                     </div>
                </div>
+
+               {/* Extended Controls: Skip & Volume */}
+               <div className="flex items-center justify-between border-t border-gray-200 pt-3">
+                    {/* Skip Controls */}
+                    <div className="flex items-center gap-3">
+                        <button 
+                            onClick={() => handleSkip(-10)} 
+                            className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-teal-600 transition-colors p-1 rounded-md hover:bg-gray-100"
+                            title="Rewind 10s"
+                            disabled={!preloadedAudioBase64 && !audioBuffer}
+                        >
+                            <RotateCcw size={14} /> 10s
+                        </button>
+                        <button 
+                            onClick={() => handleSkip(10)} 
+                            className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-teal-600 transition-colors p-1 rounded-md hover:bg-gray-100"
+                            title="Skip 10s"
+                            disabled={!preloadedAudioBase64 && !audioBuffer}
+                        >
+                            <RotateCw size={14} /> 10s
+                        </button>
+                    </div>
+
+                    {/* Volume Control */}
+                    <div className="flex items-center gap-2 w-28">
+                         {volume === 0 ? <Volume2 size={16} className="text-gray-400" /> : <Volume2 size={16} className="text-teal-600" />}
+                         <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={volume}
+                            onChange={(e) => setVolume(parseFloat(e.target.value))}
+                            className="w-full h-1 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-teal-600"
+                            title={`Volume: ${Math.round(volume * 100)}%`}
+                         />
+                    </div>
+               </div>
+
                {!visualData && !preloadedAudioBase64 && !isLoadingAudio && (
-                   <div className="text-[10px] text-gray-400 pl-1">
+                   <div className="text-[10px] text-gray-400 pl-1 mt-1">
                       Audio generating in background...
                    </div>
                )}

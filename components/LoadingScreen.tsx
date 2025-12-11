@@ -12,7 +12,7 @@ const LoadingScreen: React.FC = () => {
       </div>
       <h2 className="mt-8 text-2xl font-bold text-gray-900">Analyzing Bio-Profile</h2>
       <p className="mt-2 text-gray-600 max-w-md">
-        Our AI is calculating your BMI, assessing metabolic risks based on your blood group, and structuring your personalized wellness plan...
+       AI is calculating your BMI, assessing metabolic risks based on your blood group, and structuring your personalized wellness plan...
       </p>
       
       <div className="mt-8 w-64 h-2 bg-gray-100 rounded-full overflow-hidden">

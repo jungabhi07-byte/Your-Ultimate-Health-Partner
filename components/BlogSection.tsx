@@ -10,7 +10,7 @@ const blogs = [
   },
   {
     title: "Sleep: The Foundation of Health",
-    description: "Sleep services all aspects of our body in one way or another: molecular, energy balance, as well as intellectual function, alertness and mood. Aim for 7-9 hours of quality sleep to boost your immune system and mental clarity.",
+    description: "Sleep services all aspects of the body in one way or another: molecular, energy balance, as well as intellectual function, alertness and mood. Aim for 7-9 hours of quality sleep to boost your immune system and mental clarity.",
     icon: <Moon className="h-6 w-6 text-indigo-500" />,
     color: "bg-indigo-50"
   },

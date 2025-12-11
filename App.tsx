@@ -1,19 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { AppState, UserProfile, HealthReport } from './types';
 import { INITIAL_USER_PROFILE } from './constants';
-import { generateHealthReport, generateReportVisual } from './services/geminiService';
+import { generateHealthReport, generateReportVisual, generateAudioSummary, generateFastSummary } from './services/geminiService';
 import Hero from './components/Hero';
 import BlogSection from './components/BlogSection';
 import HealthForm from './components/HealthForm';
 import LoadingScreen from './components/LoadingScreen';
 import ReportDashboard from './components/ReportDashboard';
 import BloodTypeBlog from './components/BloodTypeBlog';
-import { HeartPulse, ArrowUp } from 'lucide-react';
+import { HeartPulse, ArrowUp, RefreshCw, AlertCircle } from 'lucide-react';
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.LANDING);
   const [userProfile, setUserProfile] = useState<UserProfile>(INITIAL_USER_PROFILE);
   const [report, setReport] = useState<HealthReport | null>(null);
+  const [reportAudio, setReportAudio] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
@@ -47,34 +48,97 @@ const App: React.FC = () => {
     setUserProfile(data);
     setAppState(AppState.LOADING);
     setError(null);
+    setReportAudio(null); // Reset previous audio
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
     try {
-      // Generate fresh report without history context
-      const generatedReport = await generateHealthReport(data);
-      
+      // --- PARALLEL EXECUTION STRATEGY ---
+      // Instead of waiting for the report to generate before starting visuals/audio,
+      // we start everything at once using the UserProfile data.
+
+      // 1. Start Visual Generation (Uses Profile Data directly)
+      const visualPromise = generateReportVisual(data);
+
+      // 2. Start Fast Summary (Faster than full report)
+      const summaryPromise = generateFastSummary(data);
+
+      // 3. Start Full Detailed Report
+      const reportPromise = generateHealthReport(data);
+
+      // 4. Chain Audio Generation to Fast Summary
+      // This ensures Audio is ready ~3-4 seconds faster than waiting for the full report
+      const audioPromise = summaryPromise.then(summary => generateAudioSummary(summary));
+
+      // 5. Await Critical Data (Report & Summary)
+      // We need these before we can show the dashboard
+      const [fastSummary, generatedReport] = await Promise.all([summaryPromise, reportPromise]);
+
+      // 6. Inject Fast Summary into Report
+      // This ensures the Text Summary on screen matches the Audio exactly
+      generatedReport.summary = fastSummary;
+
+      // 7. Update State
       setReport(generatedReport);
-      
-      // Move to report screen immediately with the text data
       setAppState(AppState.REPORT);
 
-      // Generate the visual in the background and update state when ready
-      generateReportVisual(generatedReport.summary).then(base64Image => {
+      // 8. Attach Async Visuals & Audio when ready
+      visualPromise.then(base64Image => {
         if (base64Image) {
             setReport(prev => prev ? ({ ...prev, visualBase64: base64Image }) : null);
         }
-      });
+      }).catch(e => console.error("Visual gen failed", e));
 
-    } catch (err) {
+      audioPromise.then(base64Audio => {
+        if (base64Audio) {
+            setReportAudio(base64Audio);
+        }
+      }).catch(e => console.error("Audio gen failed", e));
+
+    } catch (err: any) {
       console.error(err);
-      setError("We encountered an issue analyzing your profile. Please check your connection and try again.");
+      
+      // Refined Error Messages
+      let msg = "An issue occurred while analyzing your profile. Please check your connection and try again.";
+      if (err.message) {
+          if (err.message.includes('429') || err.message.includes('Resource has been exhausted')) {
+              msg = "The AI servers are currently experiencing high traffic. Please try again in a moment.";
+          } else if (err.message.includes('404') || err.message.includes('Not Found')) {
+              msg = "The AI service is currently unavailable (Model Not Found). Please contact support.";
+          } else if (err.message.includes('API_KEY') || err.message.includes('403')) {
+              msg = "Service configuration error: Invalid or missing API Key.";
+          } else if (err.message.includes('Safety') || err.message.includes('blocked')) {
+              msg = "The profile data triggered safety filters. Please review your entries and try again.";
+          } else if (err.message.includes('parse')) {
+              msg = "A malformed response was received from the AI. Please try again.";
+          } else {
+              msg = `Analysis failed: ${err.message}`;
+          }
+      }
+      
+      setError(msg);
       setAppState(AppState.ERROR);
     }
+  };
+
+  const handleRetry = () => {
+      if (userProfile.age) {
+          // Retry with existing data
+          handleFormSubmit(userProfile);
+      } else {
+          // Fallback to form if no data
+          setAppState(AppState.FORM);
+      }
+  };
+
+  const handleEditProfile = () => {
+    setAppState(AppState.FORM);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleReset = () => {
     setUserProfile(INITIAL_USER_PROFILE);
     setReport(null);
+    setReportAudio(null);
     setAppState(AppState.LANDING);
     // Use timeout to allow render cycle to complete before scrolling
     setTimeout(() => {
@@ -127,23 +191,34 @@ const App: React.FC = () => {
         {appState === AppState.REPORT && report && (
           <ReportDashboard 
             report={report} 
+            initialAudioBase64={reportAudio}
             onReset={handleReset} 
           />
         )}
 
         {appState === AppState.ERROR && (
-          <div className="max-w-md mx-auto mt-20 p-6 bg-white rounded-lg shadow-lg text-center">
-            <div className="text-red-500 mb-4 flex justify-center">
-                <HeartPulse className="h-12 w-12" />
+          <div className="max-w-md mx-auto mt-20 p-8 bg-white rounded-2xl shadow-xl text-center border border-red-100 animate-fadeIn">
+            <div className="bg-red-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 ring-4 ring-red-50">
+                <AlertCircle className="h-10 w-10 text-red-500" />
             </div>
-            <h3 className="text-lg font-medium text-gray-900">Analysis Failed</h3>
-            <p className="mt-2 text-sm text-gray-500">{error}</p>
-            <button
-              onClick={() => setAppState(AppState.FORM)}
-              className="mt-6 w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-teal-600 text-base font-medium text-white hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 sm:text-sm"
-            >
-              Try Again
-            </button>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Analysis Interrupted</h3>
+            <p className="text-gray-600 mb-8 leading-relaxed text-sm">{error}</p>
+            
+            <div className="flex flex-col gap-3">
+                <button
+                  onClick={handleRetry}
+                  className="w-full inline-flex justify-center items-center gap-2 rounded-xl border border-transparent shadow-md px-6 py-3 bg-teal-600 text-base font-semibold text-white hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 transition-all active:scale-[0.98]"
+                >
+                  <RefreshCw className="h-5 w-5" />
+                  Retry Analysis
+                </button>
+                <button
+                  onClick={handleEditProfile}
+                  className="w-full inline-flex justify-center items-center gap-2 rounded-xl border border-gray-200 px-6 py-3 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-200 transition-all"
+                >
+                  Edit Profile Details
+                </button>
+            </div>
           </div>
         )}
       </main>

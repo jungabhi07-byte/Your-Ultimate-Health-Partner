@@ -37,7 +37,7 @@ const Hero: React.FC<HeroProps> = ({ onStart, onOpenBloodBlog }) => {
           </div>
 
           <p className="mt-2 text-lg leading-8 text-gray-600">
-            Unlock the secrets of your biology with instant, privacy-first AI analysis. Transform your health data into a dynamic, personalized roadmap designed to energize your body, sharpen your mind, and elevate your daily life.
+            Understand your body with this fast and private AI tool. Turn your health data into a simple plan to boost your energy, focus your mind, and improve your daily life.
           </p>
           
           <div className="mt-8 flex flex-col sm:flex-row items-start sm:items-center gap-4">
